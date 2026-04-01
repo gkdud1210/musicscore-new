@@ -1,0 +1,27 @@
+# ScoreShift Backend — Python Dependencies
+
+# ── Web Framework ──────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+
+# ── AI / OpenAI ────────────────────────────
+openai>=1.35.0
+
+# ── 악보 처리 (음악 이론) ─────────────────
+music21>=9.1.0
+
+# ── 환경 변수 ──────────────────────────────
+python-dotenv==1.0.1
+
+# ── 이미지 처리 / OMR ────────────────────────
+Pillow>=10.0.0
+opencv-python-headless>=4.8.0  # 오선지 인식 (OMR)
+numpy>=1.24.0
+
+# ── 데이터 유효성 검사 ─────────────────────
+pydantic>=2.7.0
+
+# ── 유틸리티 ───────────────────────────────
+python-multipart==0.0.9  # 파일 업로드 지원
+aiofiles==23.2.1         # 비동기 파일 처리
+httpx==0.27.0            # 비동기 HTTP 클라이언트
