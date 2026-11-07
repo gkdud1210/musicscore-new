@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import shutil
+from datetime import date
 from typing import List, Optional
 from urllib.parse import quote
 
@@ -139,6 +140,17 @@ def guess_date_from_filename(name: str) -> Optional[str]:
         mo, d = int(mo), int(d)
         if 1 <= mo <= 12 and 1 <= d <= 31 and 2000 <= y <= 2100:
             return f"{y:04d}-{mo:02d}-{d:02d}"
+    # 연도 없이 "11월6일", "11월 6일" → 오늘 기준 가장 최근의 그 날짜 (미래면 작년)
+    m = re.search(r'(?<!\d)(\d{1,2})\s*월\s*(\d{1,2})\s*일', name or "")
+    if m:
+        mo, d = int(m.group(1)), int(m.group(2))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            today = date.today()
+            y = today.year if (mo, d) <= (today.month, today.day) else today.year - 1
+            try:
+                return date(y, mo, d).isoformat()
+            except ValueError:
+                return None
     return None
 
 

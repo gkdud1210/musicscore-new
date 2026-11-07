@@ -1731,3 +1731,33 @@ body.read-only .admin-only { display: none !important; }
   .header-inner { gap: 10px; padding: 0 12px; }
   .header-status { display: none; }
 }
+a.logo { text-decoration: none; color: inherit; }
+@media (max-width: 640px) { .logo-text { font-size: 15px; } }
+
+/* 곡 화면 — 이 곡이 들어간 콘티 목록 */
+.song-section-title { font-size: 15px; font-weight: 700; margin: 8px 0 12px; }
+.song-section-title span { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); margin-left: 4px; }
+.song-contis { margin-bottom: 20px; display: flex; flex-direction: column; gap: 10px; }
+.song-contis .song-section-title { margin-bottom: 2px; }
+.song-conti-row {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-md); padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.song-conti-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.song-conti-name {
+  background: none; border: none; padding: 0; cursor: pointer; text-align: left;
+  color: var(--text-primary); font-size: 14px; font-weight: 700; font-family: var(--font-main);
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 160px;
+}
+.song-conti-name:hover span:last-child { color: var(--accent-light); text-decoration: underline; }
+.song-conti-date {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 500;
+  color: var(--accent-light); background: var(--accent-dim);
+  padding: 2px 8px; border-radius: 8px; flex-shrink: 0;
+}
+.song-conti-key { font-size: 12px; color: var(--text-secondary); }
+.song-conti-key b { color: var(--accent-light); font-family: var(--font-mono); }
+.song-conti-actions { display: flex; gap: 6px; }
+.conti-song-chip.current { background: var(--accent-dim); border-color: var(--accent); color: var(--text-primary); font-weight: 700; }
+.modal-back { display: inline-block; margin-bottom: 14px; font-size: 13px; }

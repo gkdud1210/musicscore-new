@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>🎵 ScoreShift — 찬양 악보 라이브러리</title>
+  <title>찬양악보 라이브러리</title>
   <!-- PWA (홈 화면에 추가) -->
   <link rel="manifest" href="manifest.webmanifest" />
   <meta name="theme-color" content="#0a0a0f" />
@@ -18,7 +18,7 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="css/style.css?v=3" />
+  <link rel="stylesheet" href="css/style.css?v=4" />
 </head>
 <body>
   <div class="bg-particles" id="bgParticles"></div>
@@ -26,11 +26,10 @@
   <!-- ===== HEADER ===== -->
   <header class="header">
     <div class="header-inner">
-      <div class="logo">
+      <a class="logo" href="index.html" aria-label="첫 화면으로">
         <span class="logo-icon">♪</span>
-        <span class="logo-text">ScoreShift</span>
-        <span class="logo-badge">AI</span>
-      </div>
+        <span class="logo-text">찬양악보 라이브러리</span>
+      </a>
       <nav class="nav">
         <a href="index.html" class="nav-link active">📚 라이브러리</a>
         <a href="transpose.html" class="nav-link">🔄 조 변환 (부가기능)</a>
@@ -46,7 +45,7 @@
 
     <!-- ===== 라이브러리 헤더 ===== -->
     <section class="lib-hero">
-      <h1 class="lib-hero-title">찬양 악보 라이브러리</h1>
+      <h1 class="lib-hero-title">찬양악보 라이브러리</h1>
       <p class="lib-hero-sub">
         콘티 PDF를 올리면 곡마다 나눠서 제목·키·가사를 자동으로 인식해요.
         곡을 골라 담고 새 콘티 PDF로 내보내세요.
@@ -166,13 +165,13 @@
 
   <footer class="footer">
     <div class="footer-inner">
-      <span class="footer-logo">♪ ScoreShift</span>
+      <span class="footer-logo">♪ 찬양악보 라이브러리</span>
       <span class="footer-tech">로컬 Tesseract OCR · PDF.js · PyMuPDF</span>
       <span class="footer-copy">Built with ♥ for Musicians</span>
     </div>
   </footer>
 
-  <script src="js/api.js?v=3"></script>
-  <script src="js/library.js?v=3"></script>
+  <script src="js/api.js?v=4"></script>
+  <script src="js/library.js?v=4"></script>
 </body>
 </html>

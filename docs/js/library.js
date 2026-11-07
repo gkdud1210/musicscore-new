@@ -282,19 +282,86 @@ function renderSongCard(g) {
 /* ============================================================
    곡 상세 모달 (같은 곡의 모든 버전 + 악보 이미지 전체)
    ============================================================ */
-function openSongModal(groupKey) {
-  LibState.modal = { type: 'song', groupKey };
+function sortVersions(versions) {
+  return versions.sort((a, b) =>
+    String(b.conti_date || '').localeCompare(String(a.conti_date || '')) || b.score_id - a.score_id || a.page_start - b.page_start);
+}
+
+async function openSongModal(groupKey) {
+  const g = LibState.groupsById.get(groupKey);
+  if (!g) return;
+  LibState.modal = { type: 'song', groupKey, title: g.main.title, versions: [...g.versions] };
   renderSongModal();
   showModal();
+  // 검색/키 필터와 상관없이 이 곡이 들어간 모든 콘티를 보여주기 위해 같은 제목의 곡을 전부 다시 가져온다
+  await loadAllVersions();
+}
+
+async function loadAllVersions() {
+  const modal = LibState.modal;
+  if (!modal || modal.type !== 'song') return;
+  try {
+    const target = normTitle(modal.title);
+    const all = await apiJson(`/api/songs?q=${encodeURIComponent(modal.title)}`);
+    const versions = all.filter(s => normTitle(s.title) === target);
+    if (versions.length && LibState.modal === modal) {
+      modal.versions = sortVersions(versions);
+      renderSongModal();
+    }
+  } catch (e) {
+    console.warn('곡 버전 불러오기 실패:', e);
+  }
 }
 
 function renderSongModal() {
-  const g = LibState.groupsById.get(LibState.modal.groupKey);
-  if (!g) { closeModal(); return; }
+  const m = LibState.modal;
+  const versions = m.versions || [];
+  if (!versions.length) { closeModal(); return; }
+  const contiCount = new Set(versions.map(v => v.score_id)).size;
   document.getElementById('libModalBody').innerHTML = `
-    <h2 class="lib-modal-title">${escapeHtml(g.main.title)}</h2>
-    <p class="lib-modal-sub">${g.versions.length > 1 ? `${g.versions.length}개 콘티에서 사용 · 버전을 골라 담으세요` : '악보'}</p>
-    ${g.versions.map(renderSongVersion).join('')}`;
+    <h2 class="lib-modal-title">${escapeHtml(versions[0].title)}</h2>
+    <p class="lib-modal-sub">${contiCount > 1 ? `${contiCount}개 콘티에서 사용했어요` : '1개 콘티에서 사용했어요'}</p>
+    ${renderSongContis(versions)}
+    <h3 class="song-section-title">🎼 악보 <span>${versions.length}</span></h3>
+    ${versions.map(renderSongVersion).join('')}`;
+}
+
+/** 이 곡이 들어간 콘티 목록 — 콘티마다 전체 곡 순서를 보여주고, 이 곡은 강조 */
+function renderSongContis(versions) {
+  const versionIds = new Set(versions.map(v => v.id));
+  const contiIds = [...new Set(versions.map(v => v.score_id))];
+  const rows = contiIds.map(id => {
+    const c = LibState.contis.find(x => x.id === id);
+    if (c) return c;
+    const v = versions.find(x => x.score_id === id); // 목록에 아직 없으면 곡 정보로 최소 표시
+    return { id, title: v.conti_title, conti_date: v.conti_date, songs: [] };
+  }).sort((a, b) => String(b.conti_date || '').localeCompare(String(a.conti_date || '')) || b.id - a.id);
+
+  return `
+    <section class="song-contis">
+      <h3 class="song-section-title">📁 이 곡이 들어간 콘티 <span>${rows.length}</span></h3>
+      ${rows.map(c => {
+        const here = c.songs.filter(s => versionIds.has(s.id));
+        const keys = [...new Set(here.map(s => s.key).filter(Boolean))].join(', ');
+        return `
+        <div class="song-conti-row">
+          <div class="song-conti-head">
+            <button type="button" class="song-conti-name" data-action="open-conti" data-id="${c.id}">
+              ${c.conti_date ? `<span class="song-conti-date">${escapeHtml(c.conti_date)}</span>` : ''}
+              <span>${escapeHtml(c.title)}</span>
+            </button>
+            ${keys ? `<span class="song-conti-key">이 곡 키: <b>${escapeHtml(keys)}</b></span>` : ''}
+            <div class="song-conti-actions">
+              <button type="button" class="btn-sm" data-action="open-conti" data-id="${c.id}">콘티 보기</button>
+              <button type="button" class="btn-sm" data-action="add-conti" data-id="${c.id}">＋ 전체 담기</button>
+            </div>
+          </div>
+          ${c.songs.length ? `<div class="conti-songs">
+            ${c.songs.map((s, i) => `<span class="conti-song-chip${versionIds.has(s.id) ? ' current' : ''}">${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</span>`).join('')}
+          </div>` : ''}
+        </div>`;
+      }).join('')}
+    </section>`;
 }
 
 function renderSongVersion(s) {
@@ -334,9 +401,11 @@ async function saveSong(id, form) {
     if (LibState.modal?.type === 'conti') await reloadContiModal();
     else {
       await refreshAll();
-      // 제목이 바뀌면 그룹 키가 바뀌므로 새 그룹을 찾아서 모달 유지
-      const g = LibState.groups.find(gr => gr.versions.some(v => v.id === id));
-      if (g) { LibState.modal.groupKey = g.key; renderSongModal(); } else closeModal();
+      // 제목이 바뀌었을 수 있으니 바뀐 제목 기준으로 같은 곡들을 다시 모은다
+      if (LibState.modal?.type === 'song') {
+        LibState.modal.title = title || LibState.modal.title;
+        await loadAllVersions();
+      }
     }
   } catch (e) {
     showToast('수정 실패: ' + e.message, 'error');
@@ -379,7 +448,9 @@ function renderContis() {
    콘티 상세 모달 — 페이지별 곡 경계 보정 (합치기/나누기/빼기/추가)
    ============================================================ */
 async function openContiModal(id) {
-  LibState.modal = { type: 'conti', id };
+  // 곡 화면에서 콘티로 들어왔으면 "뒤로" 버튼으로 곡 화면에 돌아갈 수 있게 기억
+  const back = LibState.modal?.type === 'song' ? LibState.modal : null;
+  LibState.modal = { type: 'conti', id, back };
   showModal();
   document.getElementById('libModalBody').innerHTML = '<p class="lib-modal-sub">불러오는 중...</p>';
   await reloadContiModal();
@@ -394,6 +465,13 @@ async function reloadContiModal() {
     ]);
     LibState.modal.songs = songs;
     renderContiModal(conti, songs);
+    const back = LibState.modal.back;
+    if (back) {
+      const body = document.getElementById('libModalBody');
+      body.insertAdjacentHTML('afterbegin',
+        `<button type="button" class="btn-link modal-back" data-action="modal-back">← "${escapeHtml(back.title)}" 로 돌아가기</button>`);
+    }
+    document.querySelector('.lib-modal')?.scrollTo(0, 0);
   } catch (e) {
     showToast('콘티를 불러오지 못했어요: ' + e.message, 'error');
     closeModal();
@@ -522,6 +600,13 @@ function initDelegatedActions() {
     switch (el.dataset.action) {
       case 'open-song': openSongModal(el.dataset.group); break;
       case 'open-conti': openContiModal(id); break;
+      case 'modal-back':
+        if (LibState.modal?.back) {
+          LibState.modal = LibState.modal.back;
+          renderSongModal();
+          document.querySelector('.lib-modal')?.scrollTo(0, 0);
+        }
+        break;
       case 'toggle-set': e.preventDefault(); toggleSetlist(id); break;
       case 'key-all': LibState.selectedKeys.clear(); renderKeyChips(); fetchSongs(); break;
       case 'toggle-key': toggleIn(LibState.selectedKeys, el.dataset.key); renderKeyChips(); fetchSongs(); break;
