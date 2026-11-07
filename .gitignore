@@ -2,6 +2,9 @@
 backend/.env
 .env
 
+# 악보 라이브러리 저장소 (업로드된 PDF, DB, 썸네일 — 기기별 개인 데이터)
+backend/storage/
+
 # Python
 __pycache__/
 *.pyc

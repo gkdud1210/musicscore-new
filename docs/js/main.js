@@ -28,7 +28,33 @@ window.addEventListener('DOMContentLoaded', () => {
   initUploadZone();
   renderKeyButtons();
   initBackgroundParticles();
+  loadPrefilledAnalysis();
 });
+
+/* ============================================================
+   라이브러리 뷰어 → "이 페이지로 조 변환하기"로 넘어온 경우
+   업로드 단계를 건너뛰고 분석 결과를 바로 표시
+   ============================================================ */
+function loadPrefilledAnalysis() {
+  const raw = sessionStorage.getItem('prefillAnalysis');
+  if (!raw) return;
+  sessionStorage.removeItem('prefillAnalysis');
+
+  try {
+    const data = JSON.parse(raw);
+    AppState.analysisData = data;
+
+    showSection('analysis-section');
+    document.getElementById('analysisLoading').style.display = 'none';
+    document.getElementById('analysisResult').classList.remove('hidden');
+
+    displayAnalysisResult(data);
+    showSection('transpose-section');
+    showToast('라이브러리에서 불러온 악보를 분석했습니다.', 'success');
+  } catch (e) {
+    console.warn('사전 분석 데이터 로드 실패:', e);
+  }
+}
 
 /* ============================================================
    배경 파티클

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>🎼 악보 보기 — ScoreShift</title>
+  <!-- PWA (홈 화면에 추가) -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#0a0a0f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-title" content="찬양악보" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" href="icons/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="css/style.css?v=3" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js"></script>
+</head>
+<body class="viewer-body">
+
+  <header class="viewer-header">
+    <a href="index.html" class="viewer-back-btn" title="라이브러리로">←</a>
+    <span class="viewer-title" id="viewerTitle">불러오는 중...</span>
+    <div class="viewer-header-actions">
+      <button class="btn-sm" id="analyzePageBtn">🔄 이 페이지 조 변환</button>
+      <button class="btn-sm" id="exportBtn">⬇️ PDF 내보내기</button>
+    </div>
+  </header>
+
+  <div class="viewer-toolbar">
+    <div class="viewer-toolbar-group">
+      <button class="viewer-tool-btn active" data-tool="pen" title="펜">✏️</button>
+      <button class="viewer-tool-btn" data-tool="highlighter" title="형광펜">🖊️</button>
+      <button class="viewer-tool-btn" data-tool="eraser" title="지우개">🧹</button>
+    </div>
+    <div class="viewer-toolbar-group">
+      <button class="viewer-color-swatch active" data-color="#ff3b30" style="background:#ff3b30" title="빨강"></button>
+      <button class="viewer-color-swatch" data-color="#111118" style="background:#111118" title="검정"></button>
+      <button class="viewer-color-swatch" data-color="#2f6fed" style="background:#2f6fed" title="파랑"></button>
+      <button class="viewer-color-swatch" data-color="#22c55e" style="background:#22c55e" title="초록"></button>
+      <button class="viewer-color-swatch" data-color="#f59e0b" style="background:#f59e0b" title="노랑"></button>
+    </div>
+    <div class="viewer-toolbar-group">
+      <button class="viewer-width-btn" data-width="thin" title="얇게">▪</button>
+      <button class="viewer-width-btn active" data-width="medium" title="보통">●</button>
+      <button class="viewer-width-btn" data-width="thick" title="굵게">⬤</button>
+    </div>
+    <div class="viewer-toolbar-group">
+      <button class="viewer-tool-btn" id="undoBtn" title="실행취소">↩️</button>
+      <button class="viewer-tool-btn" id="panModeBtn" title="손가락으로 이동/확대 화면 이동">🖐️</button>
+    </div>
+    <div class="viewer-toolbar-group viewer-toolbar-zoom">
+      <button class="viewer-tool-btn" id="zoomOutBtn" title="축소">－</button>
+      <button class="viewer-tool-btn" id="zoomInBtn" title="확대">＋</button>
+    </div>
+  </div>
+
+  <div class="viewer-canvas-scroll" id="canvasScroll">
+    <div class="viewer-page-stack" id="pageStack">
+      <canvas id="pdfCanvas"></canvas>
+      <canvas id="inkCanvas"></canvas>
+    </div>
+  </div>
+
+  <div class="viewer-page-nav">
+    <button class="btn-sm" id="prevPageBtn">◀ 이전</button>
+    <span class="viewer-page-indicator" id="pageIndicator">— / —</span>
+    <button class="btn-sm" id="nextPageBtn">다음 ▶</button>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="js/api.js?v=3"></script>
+  <script src="js/annotate.js"></script>
+  <script src="js/viewer.js"></script>
+</body>
+</html>

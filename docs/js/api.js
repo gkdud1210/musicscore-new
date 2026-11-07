@@ -241,3 +241,181 @@ window.addEventListener('load', () => {
   setTimeout(checkServerStatus, 500);
   setInterval(checkServerStatus, 30000);
 });
+
+/* ============================================================
+   공용 유틸 (라이브러리 / 뷰어 페이지에서 공유)
+   ============================================================ */
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
+function showToast(message, type = 'info', duration = 3500) {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+  const icons = { success: '✅', error: '❌', info: 'ℹ️', warning: '⚠️' };
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `
+    <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
+    <span class="toast-msg">${escapeHtml(message)}</span>
+    <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+  `;
+  container.appendChild(toast);
+  setTimeout(() => toast.remove(), duration);
+}
+
+/* ============================================================
+   로그인 상태 / 권한 (공용 비밀번호)
+   ============================================================ */
+const AuthState = { auth: false, role: 'admin', canEdit: true, hasAdmin: false, ready: null };
+
+// 로그인이 풀린 상태에서 API를 부르면 로그인 화면으로 보낸다
+(function wrapFetchForAuth() {
+  const origFetch = window.fetch.bind(window);
+  window.fetch = async (input, init) => {
+    const res = await origFetch(input, init);
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const sameOrigin = url.startsWith('/') || url.startsWith(window.location.origin);
+    if (sameOrigin && res.status === 401 && !url.includes('/api/login') && !location.pathname.endsWith('login.html')) {
+      const next = location.pathname + location.search;
+      location.href = `login.html?next=${encodeURIComponent(next)}`;
+    }
+    return res;
+  };
+})();
+
+AuthState.ready = (async () => {
+  try {
+    const res = await fetch(`${API_BASE}/api/me`);
+    if (res.ok) {
+      const me = await res.json();
+      AuthState.auth = me.auth;
+      AuthState.role = me.role;
+      AuthState.canEdit = !!me.can_edit;
+      AuthState.hasAdmin = !!me.has_admin;
+    }
+  } catch { /* 오프라인이면 기본값(로컬 사용) */ }
+  return AuthState;
+})();
+
+window.addEventListener('DOMContentLoaded', async () => {
+  await AuthState.ready;
+  document.body.classList.toggle('read-only', !AuthState.canEdit);
+  renderHeaderAccount();
+  initInstallButton();
+});
+
+function renderHeaderAccount() {
+  const header = document.querySelector('.header-inner');
+  if (!header || document.getElementById('headerAccount')) return;
+  const box = document.createElement('div');
+  box.id = 'headerAccount';
+  box.className = 'header-account';
+  let html = `<button type="button" class="header-account-btn hidden" id="installBtn">📲 홈 화면에 추가</button>`;
+  if (AuthState.auth) {
+    if (AuthState.hasAdmin && AuthState.role !== 'admin') {
+      html += `<a class="header-account-btn" href="login.html?admin=1&next=${encodeURIComponent(location.pathname + location.search)}">🔑 관리자</a>`;
+    }
+    if (AuthState.role === 'admin' && AuthState.hasAdmin) html += `<span class="header-account-role">관리자</span>`;
+    html += `<button type="button" class="header-account-btn" id="logoutBtn">로그아웃</button>`;
+  }
+  box.innerHTML = html;
+  header.appendChild(box);
+  document.getElementById('logoutBtn')?.addEventListener('click', async () => {
+    await fetch(`${API_BASE}/api/logout`, { method: 'POST' });
+    location.href = 'login.html';
+  });
+}
+
+/* ============================================================
+   홈 화면에 추가 (PWA)
+   ============================================================ */
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  // 안드로이드 크롬: 설치 프롬프트를 잡아뒀다가 버튼으로 띄운다
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  document.getElementById('installBtn')?.classList.remove('hidden');
+});
+
+function isStandaloneApp() {
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+
+function isIOS() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPadOS는 맥으로 표시됨
+}
+
+function initInstallButton() {
+  const btn = document.getElementById('installBtn');
+  if (!btn || isStandaloneApp()) return;
+  if (isIOS() || deferredInstallPrompt) btn.classList.remove('hidden');
+  btn.addEventListener('click', async () => {
+    if (deferredInstallPrompt) {
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice.catch(() => null);
+      deferredInstallPrompt = null;
+      btn.classList.add('hidden');
+      return;
+    }
+    showInstallGuide();
+  });
+}
+
+function showInstallGuide() {
+  const ios = isIOS();
+  const overlay = document.createElement('div');
+  overlay.className = 'install-guide';
+  overlay.innerHTML = `
+    <div class="install-guide-box">
+      <h3>📲 홈 화면에 추가하기</h3>
+      ${ios ? `
+        <ol>
+          <li><b>Safari</b>에서 이 페이지를 열어주세요 (카톡 안 브라우저에서는 안 돼요)</li>
+          <li>아래(아이패드는 위) 공유 버튼 <span class="install-icon">⬆︎</span> 을 누르고</li>
+          <li><b>"홈 화면에 추가"</b>를 누르면 끝!</li>
+        </ol>` : `
+        <ol>
+          <li><b>크롬</b>에서 이 페이지를 열어주세요</li>
+          <li>오른쪽 위 <b>⋮</b> 메뉴를 누르고</li>
+          <li><b>"홈 화면에 추가"</b> 또는 <b>"앱 설치"</b>를 누르세요</li>
+        </ol>`}
+      <p>앱처럼 아이콘을 눌러서 바로 열 수 있어요. 처음 한 번만 비밀번호를 입력하면 돼요.</p>
+      <button type="button" class="btn-primary">알겠어요</button>
+    </div>`;
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay || e.target.tagName === 'BUTTON') overlay.remove();
+  });
+  document.body.appendChild(overlay);
+}
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+
+/** 휴대폰에서 만든 PDF를 공유 시트(카톡·파일 저장 등)로 넘기고, 안 되면 일반 다운로드 */
+async function saveOrShareFile(blob, filename) {
+  const file = new File([blob], filename, { type: blob.type || 'application/pdf' });
+  const mobile = isIOS() || /android/i.test(navigator.userAgent);
+  if (mobile && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: filename });
+      return 'shared';
+    } catch (e) {
+      if (e && e.name === 'AbortError') return 'cancelled';
+      // 공유 실패 시 아래 다운로드로
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  return 'downloaded';
+}

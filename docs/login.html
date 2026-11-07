@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>ScoreShift — 로그인</title>
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#0a0a0f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-title" content="찬양악보" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="css/style.css?v=3" />
+</head>
+<body class="login-page">
+  <main class="login-box">
+    <div class="login-logo">♪</div>
+    <h1 class="login-title">찬양 악보 라이브러리</h1>
+    <p class="login-sub" id="loginSub">팀에서 받은 비밀번호를 입력해주세요</p>
+    <form id="loginForm" class="login-form" autocomplete="on">
+      <input type="text" name="username" value="scoreshift" autocomplete="username" hidden />
+      <input type="password" id="loginPassword" class="lib-search-input login-input" placeholder="비밀번호"
+             autocomplete="current-password" required autofocus />
+      <button type="submit" class="btn-primary login-btn" id="loginBtn">들어가기</button>
+      <p class="login-error" id="loginError" role="alert"></p>
+    </form>
+  </main>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const next = params.get('next') || 'index.html';
+    // 같은 사이트 안의 경로로만 돌아간다 (외부 주소로 튕기는 것 방지)
+    const safeNext = /^\/(?!\/)/.test(next) || /^[\w.-]+\.html/.test(next) ? next : 'index.html';
+    if (params.get('admin')) {
+      document.getElementById('loginSub').textContent = '관리자 비밀번호를 입력하면 업로드·수정·삭제를 할 수 있어요';
+    }
+
+    document.getElementById('loginForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const btn = document.getElementById('loginBtn');
+      const err = document.getElementById('loginError');
+      err.textContent = '';
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: document.getElementById('loginPassword').value }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || `오류 (${res.status})`);
+        location.replace(safeNext);
+      } catch (ex) {
+        err.textContent = ex.message;
+        document.getElementById('loginPassword').select();
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  </script>
+</body>
+</html>

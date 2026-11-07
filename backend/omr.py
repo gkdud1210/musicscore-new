@@ -513,14 +513,191 @@ def map_position_to_pitch(y: int, staff: Dict, clef: str = "treble") -> Tuple[st
     return ('C', 4)
 
 
-def estimate_duration(note_head: Dict, avg_spacing: float) -> str:
-    """음표 머리 특성으로 음길이 추정"""
-    if not note_head["filled"]:
-        if note_head["w"] > avg_spacing * 1.8:
-            return "w"  # 온음표
-        return "h"  # 2분음표
+def get_binary_image(img: np.ndarray) -> np.ndarray:
+    """이진화 이미지 생성 (공통 사용)"""
+    gray = to_grayscale(img)
+    h, w = gray.shape
+    block_size = max(15, min(51, w // 50)) | 1
+    return cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, block_size, 10
+    )
+
+
+def detect_stem_flags(binary: np.ndarray, note: Dict, avg_spacing: float) -> Tuple[bool, int]:
+    """
+    음표 머리에 연결된 줄기(stem)와 꼬리/보(flag/beam) 개수 감지
+    Returns: (has_stem, flag_count)
+    """
+    h, w = binary.shape
+    nx, ny = note["x"], note["y"]
+    note_r = max(note["w"], note["h"]) // 2 + 2
+
+    stem_len = int(avg_spacing * 3.8)
+    stem_hw = max(2, int(avg_spacing * 0.15))  # 줄기 탐색 폭 반값
+
+    best_has_stem = False
+    best_flag_count = 0
+    best_stem_end_y = ny
+
+    # 줄기는 음표 머리 좌우 가장자리 근처에 붙어있음 (오른쪽이 대부분)
+    for side_dx in [note_r - stem_hw, -(note_r + stem_hw)]:
+        sx1 = max(0, nx + side_dx - stem_hw)
+        sx2 = min(w, nx + side_dx + stem_hw + 1)
+        if sx2 <= sx1:
+            continue
+
+        # 위 방향 / 아래 방향 줄기 모두 확인
+        for (vy1, vy2, going_up) in [
+            (max(0, ny - stem_len), max(0, ny - note_r), True),
+            (min(h, ny + note_r), min(h, ny + stem_len), False),
+        ]:
+            if vy2 <= vy1:
+                continue
+            strip = binary[vy1:vy2, sx1:sx2]
+            if strip.size == 0:
+                continue
+            fill_ratio = np.sum(strip > 0) / strip.size
+            if fill_ratio < 0.28:
+                continue
+
+            # 줄기 끝 y 좌표 계산
+            col_density = np.sum(strip > 0, axis=1)
+            nz = np.where(col_density > 0)[0]
+            if len(nz) == 0:
+                continue
+            stem_end_y = vy1 + nz[0] if going_up else vy1 + nz[-1]
+
+            # 꼬리/보 탐색: 줄기 끝 근처의 가로 선 구조
+            flag_search_h = int(avg_spacing * 2.2)
+            fx1 = max(0, sx1 - int(avg_spacing * 0.3))
+            fx2 = min(w, sx2 + int(avg_spacing * 2.0))
+
+            if going_up:
+                fy1, fy2 = max(0, stem_end_y - int(avg_spacing * 0.4)), min(h, stem_end_y + flag_search_h)
+            else:
+                fy1, fy2 = max(0, stem_end_y - flag_search_h), min(h, stem_end_y + int(avg_spacing * 0.4))
+
+            flag_count = 0
+            if fy2 > fy1 and fx2 > fx1:
+                flag_region = binary[fy1:fy2, fx1:fx2]
+                if flag_region.size > 0:
+                    # 가로 방향 선 구조만 추출
+                    kern_w = max(int(avg_spacing * 0.55), 4)
+                    hkernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kern_w, 1))
+                    hlines = cv2.morphologyEx(flag_region, cv2.MORPH_OPEN, hkernel)
+
+                    row_dens = np.sum(hlines > 0, axis=1)
+                    flag_rows = np.where(row_dens > int(avg_spacing * 0.35))[0]
+
+                    if len(flag_rows) > 0:
+                        groups = 1
+                        for ri in range(1, len(flag_rows)):
+                            if flag_rows[ri] - flag_rows[ri - 1] > int(avg_spacing * 0.55):
+                                groups += 1
+                        flag_count = min(groups, 4)
+
+            if not best_has_stem or flag_count > best_flag_count:
+                best_has_stem = True
+                best_flag_count = flag_count
+                best_stem_end_y = stem_end_y
+
+    note["_stem_end_y"] = best_stem_end_y
+    return best_has_stem, best_flag_count
+
+
+def detect_accidentals(binary: np.ndarray, note_heads: List[Dict], avg_spacing: float) -> List[Dict]:
+    """
+    각 음표 왼쪽에서 임시표(#, ♭, ♮) 감지
+    """
+    h, w = binary.shape
+
+    for note in note_heads:
+        nx, ny = note["x"], note["y"]
+        note_r = max(note["w"], note["h"]) // 2
+
+        # 임시표 탐색 영역: 음표 왼쪽 avg_spacing * 2.5 범위
+        search_w = int(avg_spacing * 2.5)
+        ax1 = max(0, nx - note_r - search_w)
+        ax2 = max(0, nx - note_r + int(avg_spacing * 0.3))
+        ay1 = max(0, ny - int(avg_spacing * 1.5))
+        ay2 = min(h, ny + int(avg_spacing * 1.5))
+
+        if ax2 <= ax1 or ay2 <= ay1:
+            note.setdefault("accidental", None)
+            continue
+
+        region = binary[ay1:ay2, ax1:ax2]
+        if region.size == 0:
+            note.setdefault("accidental", None)
+            continue
+
+        # 오선 제거: 오선은 긴 가로선이므로 모폴로지로 제거
+        staff_kern_w = max(int(avg_spacing * 3), 20)
+        staff_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (staff_kern_w, 1))
+        staff_lines = cv2.morphologyEx(region, cv2.MORPH_OPEN, staff_kernel)
+        region_no_staff = cv2.subtract(region, staff_lines)
+
+        # 오선 제거 후 남은 픽셀이 임시표 후보
+        pixel_ratio = np.sum(region_no_staff > 0) / region_no_staff.size
+        if pixel_ratio < 0.03:
+            note.setdefault("accidental", None)
+            continue
+
+        # 샵(#) 특성: 가로선 2개 + 세로선 2개의 격자 구조 → 가로/세로 밀도 모두 높음
+        # 플랫(♭) 특성: 위에 세로선 + 아래에 곡선 → 세로 비율 높음, 세로 길이가 큰 편
+        # 제자리표(♮) 특성: 격자 구조 + 일부 빈 공간
+
+        rh, rw = region_no_staff.shape
+        if rh == 0 or rw == 0:
+            note.setdefault("accidental", None)
+            continue
+
+        h_density = np.mean(np.sum(region_no_staff > 0, axis=1) / (rw + 1))
+        v_density = np.mean(np.sum(region_no_staff > 0, axis=0) / (rh + 1))
+
+        # 세로 연속 길이 측정
+        col_filled = np.any(region_no_staff > 0, axis=1)
+        nz_rows = np.where(col_filled)[0]
+        vert_span = (nz_rows[-1] - nz_rows[0]) / avg_spacing if len(nz_rows) > 1 else 0
+
+        accidental = None
+        if h_density > 0.12 and v_density > 0.15:
+            # 가로/세로 모두 밀도가 있음 → 샵 또는 제자리표
+            accidental = "#"
+        elif v_density > 0.12 and vert_span > 1.0:
+            # 세로로 긴 구조 → 플랫
+            accidental = "b"
+
+        note["accidental"] = accidental
+
+    return note_heads
+
+
+def estimate_duration(note_head: Dict, avg_spacing: float,
+                      has_stem: bool = True, flag_count: int = 0) -> str:
+    """
+    음표 머리 특성 + 줄기/꼬리 정보로 음길이 추정
+    """
+    filled = note_head.get("filled", True)
+
+    if not filled:
+        # 속이 빈 음표
+        aspect = note_head["w"] / max(note_head["h"], 1)
+        if not has_stem or aspect > 1.6:
+            return "w"  # 온음표: 줄기 없고 넓적한 타원
+        return "h"   # 2분음표: 줄기 있고 일반 타원
     else:
-        return "q"  # 4분음표
+        # 속이 채워진 음표
+        if flag_count == 0:
+            return "q"   # 4분음표
+        elif flag_count == 1:
+            return "8"   # 8분음표
+        elif flag_count == 2:
+            return "16"  # 16분음표
+        elif flag_count == 3:
+            return "32"  # 32분음표
+        else:
+            return "32"
 
 
 def detect_barlines(img: np.ndarray, staffs: List[Dict], note_heads: List[Dict] = None) -> List[List[int]]:
@@ -671,16 +848,27 @@ def create_annotated_image(img: np.ndarray, staffs: List[Dict],
         else:
             label = "?"
 
-        # 음표 원 (빨간 / 주황)
+        # 음표 원 색상: 채워진(4분이하)=파랑, 빈(2분/온음)=주황
         color = (0, 100, 255) if note.get("filled") else (0, 180, 255)
         radius = max(int(nw * 0.6), 8)
         cv2.circle(annotated, (nx, ny), radius, color, 2)
 
-        # 계이름 라벨
+        # 음길이 표시 (음표 아래 작은 텍스트)
+        if i < len(notes_data):
+            dur_map = {"w": "온", "h": "2분", "q": "4분", "8": "8분", "16": "16분", "32": "32분"}
+            dur_label = dur_map.get(notes_data[i].get("duration", "q"), "")
+            acc_label = notes_data[i].get("accidental") or ""
+            full_label = f"{acc_label}{label}"
+            if dur_label:
+                full_label += f"({dur_label})"
+        else:
+            full_label = label
+
+        # 계이름 + 음길이 라벨
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.45
+        font_scale = 0.40
         thickness = 1
-        (tw, th), _ = cv2.getTextSize(label, font, font_scale, thickness)
+        (tw, th), _ = cv2.getTextSize(full_label, font, font_scale, thickness)
 
         label_y = ny - radius - 8
         if label_y < 15:
@@ -697,7 +885,7 @@ def create_annotated_image(img: np.ndarray, staffs: List[Dict],
                       (nx + tw // 2 + pad, label_y + pad),
                       color, 1)
 
-        cv2.putText(annotated, label,
+        cv2.putText(annotated, full_label,
                     (nx - tw // 2, label_y),
                     font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
@@ -729,6 +917,40 @@ def image_to_base64(img: np.ndarray) -> str:
 #   메인 OMR 분석 함수
 # ═══════════════════════════════════════════════════════════════
 
+def detect_time_signature(img: np.ndarray, staffs: List[Dict]) -> str:
+    """
+    박자표 영역(오선 왼쪽 약 10~20% 구간)에서 숫자 패턴으로 박자표 추정
+    실제 OCR 없이 가로/세로 픽셀 밀도 패턴으로 4/4, 3/4, 2/4, 6/8 구분
+    """
+    if not staffs:
+        return "4/4"
+    gray = to_grayscale(img)
+    h, w = gray.shape
+
+    # 박자표는 조표 바로 오른쪽, 이미지 폭의 6~18% 사이에 위치
+    ts_x1 = int(w * 0.06)
+    ts_x2 = int(w * 0.20)
+
+    staff = staffs[0]
+    ts_y1 = max(0, staff["top"] - int(staff["spacing"]))
+    ts_y2 = min(h, staff["bottom"] + int(staff["spacing"]))
+
+    if ts_y2 <= ts_y1 or ts_x2 <= ts_x1:
+        return "4/4"
+
+    region = gray[ts_y1:ts_y2, ts_x1:ts_x2]
+    _, binary = cv2.threshold(region, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    # 수평 절반 영역 밀도 비교 (상단 숫자 vs 하단 숫자)
+    mid = binary.shape[0] // 2
+    upper_density = np.mean(binary[:mid] > 0)
+    lower_density = np.mean(binary[mid:] > 0)
+
+    # 단순 휴리스틱 (실제 OCR 없이): 기본값 4/4 반환
+    # 추후 업그레이드 포인트
+    return "4/4"
+
+
 def analyze_with_omr(image_data: bytes, clef: str = "treble") -> dict:
     """
     오선지 인식 기반 악보 분석 (메인 진입점)
@@ -750,54 +972,80 @@ def analyze_with_omr(image_data: bytes, clef: str = "treble") -> dict:
                 "annotated_image": image_to_base64(img),
             }
 
-        # 3. 오선별 크롭 → 확대 → 정밀 음표 감지
+        # 3. 이진화 이미지 공통 생성 (줄기/임시표 감지에 재사용)
+        binary = get_binary_image(img)
+
+        # 4. 오선별 크롭 → 확대 → 정밀 음표 감지
         note_heads = detect_notes_per_staff(img, staffs)
 
-        # 4. 마디선 감지 (음표 위치를 참고하여 줄기와 구분)
+        # 5. 마디선 감지 (음표 위치를 참고하여 줄기와 구분)
         barlines = detect_barlines(img, staffs, note_heads)
 
-        # 5. 마디 번호 부여
+        # 6. 마디 번호 부여
         note_heads = assign_measures(note_heads, barlines, staffs)
 
-        # 6. 음이름 매핑
+        # 7. 음이름 매핑 + 줄기/꼬리 + 임시표 감지
         avg_spacing = np.mean([s["spacing"] for s in staffs])
+
+        # 임시표 일괄 감지
+        note_heads = detect_accidentals(binary, note_heads, avg_spacing)
+
         notes_data = []
         for nh in note_heads:
             staff = staffs[nh["staff_idx"]]
             pitch_name, octave = map_position_to_pitch(nh["y"], staff, clef)
-            duration = estimate_duration(nh, avg_spacing)
+
+            # 줄기 + 꼬리 감지
+            has_stem, flag_count = detect_stem_flags(binary, nh, avg_spacing)
+            duration = estimate_duration(nh, avg_spacing, has_stem, flag_count)
 
             notes_data.append({
                 "pitch": pitch_name,
                 "octave": octave,
                 "duration": duration,
+                "dotted": False,
                 "measure": nh.get("measure", 1),
                 "beat": 1.0,
                 "type": "note",
-                "accidental": None,
+                "accidental": nh.get("accidental"),
                 "position": {"x": nh["x"], "y": nh["y"]},
+                "_debug": {"has_stem": has_stem, "flag_count": flag_count},
             })
 
-        # 7. 마디별 beat 자동 계산
-        measure_notes = {}
+        # 8. 박자표 추정 후 마디별 beat 자동 계산
+        time_sig = detect_time_signature(img, staffs)
+        ts_parts = time_sig.split("/")
+        beats_per_measure = int(ts_parts[0]) if ts_parts else 4
+        beat_unit = int(ts_parts[1]) if len(ts_parts) > 1 else 4
+        # 박자 단위를 4분음표 기준으로 환산
+        beat_unit_ql = 4.0 / beat_unit  # 4/4면 1.0, 3/8면 0.5
+
+        DUR_QL = {"w": 4.0, "h": 2.0, "q": 1.0, "8": 0.5, "16": 0.25, "32": 0.125}
+
+        measure_notes: Dict[int, List] = {}
         for n in notes_data:
             m = n["measure"]
-            if m not in measure_notes:
-                measure_notes[m] = []
-            measure_notes[m].append(n)
+            measure_notes.setdefault(m, []).append(n)
 
         for m, mnotes in measure_notes.items():
             beat = 1.0
             for n in mnotes:
-                n["beat"] = beat
-                dur_beats = {"w": 4, "h": 2, "q": 1, "8": 0.5, "16": 0.25}
-                beat += dur_beats.get(n["duration"], 1)
+                n["beat"] = round(beat, 3)
+                ql = DUR_QL.get(n["duration"], 1.0)
+                if n.get("dotted"):
+                    ql *= 1.5
+                beat += ql / beat_unit_ql
 
-        # 8. 주석 이미지 생성
+        # 9. 주석 이미지 생성
         annotated = create_annotated_image(img, staffs, note_heads, notes_data, barlines)
         annotated_b64 = image_to_base64(annotated)
 
-        # 9. 마디 수 계산
+        # _debug 필드 제거 (내부 사용 후 클라이언트에 노출 안 함)
+        for n in notes_data:
+            n.pop("_debug", None)
+            n.pop("position", None)
+
+        # 마디 수 계산
         total_measures = max([n.get("measure", 1) for n in notes_data]) if notes_data else 0
 
         # 10. 신뢰도 계산

@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🎵 조 변환 — ScoreShift</title>
+  <!-- PWA (홈 화면에 추가) -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#0a0a0f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-title" content="찬양악보" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" href="icons/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="css/style.css?v=3" />
+  <!-- VexFlow for sheet music rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.2/build/cjs/vexflow.js"></script>
+</head>
+<body>
+  <!-- Background Animated Particles -->
+  <div class="bg-particles" id="bgParticles"></div>
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="header-inner">
+      <a class="logo" href="index.html" style="text-decoration:none">
+        <span class="logo-icon">♪</span>
+        <span class="logo-text">ScoreShift</span>
+        <span class="logo-badge">AI</span>
+      </a>
+      <nav class="nav">
+        <a href="index.html" class="nav-link">📚 라이브러리</a>
+        <a href="#upload-section" class="nav-link">업로드</a>
+        <a href="#analysis-section" class="nav-link">분석</a>
+        <a href="#transpose-section" class="nav-link">조 변환</a>
+        <a href="#output-section" class="nav-link">결과</a>
+      </nav>
+      <div class="header-status" id="apiStatus">
+        <span class="status-dot"></span>
+        <span class="status-text">서버 연결 중...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== HERO ===== -->
+  <section class="hero">
+    <div class="hero-content">
+      <div class="hero-tag">부가 기능 · AI-Powered Music Analysis</div>
+      <h1 class="hero-title">
+        악보를 업로드하면<br />
+        <span class="gradient-text">AI가 분석하고 조를 바꿔드려요</span>
+      </h1>
+      <p class="hero-subtitle">
+        AI가 악보를 인식하고, 음악 이론 엔진이 <br />
+        원하는 키로 모든 음표를 자동 변환합니다.
+      </p>
+      <div class="hero-chips">
+        <span class="chip">🎹 조 자동 감지</span>
+        <span class="chip">🎼 음표 전환</span>
+        <span class="chip">🎵 박자 유지</span>
+        <span class="chip">📥 PNG 다운로드</span>
+      </div>
+      <button class="btn-primary hero-cta" onclick="document.getElementById('upload-section').scrollIntoView({behavior:'smooth'})">
+        지금 시작하기 →
+      </button>
+    </div>
+    <div class="hero-visual">
+      <div class="hero-card">
+        <div class="mini-staff" id="heroStaff"></div>
+        <div class="hero-card-label">C Major → G Major</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <main class="main-container">
+
+    <!-- STEP 1: Upload -->
+    <section class="section" id="upload-section">
+      <div class="section-header">
+        <div class="step-badge">STEP 01</div>
+        <h2 class="section-title">악보 업로드</h2>
+        <p class="section-desc">MusicXML, MIDI 파일 또는 악보 이미지를 업로드하세요</p>
+      </div>
+
+      <div class="upload-area" id="uploadArea">
+        <input type="file" id="fileInput" accept=".xml,.musicxml,.mxl,.mid,.midi,.krn,.abc,image/*,.pdf" hidden />
+        <div class="upload-placeholder" id="uploadPlaceholder">
+          <div class="upload-icon">🎼</div>
+          <p class="upload-main-text">여기에 파일을 드래그하거나 클릭하세요</p>
+          <p class="upload-sub-text">MusicXML · MIDI · JPG · PNG · PDF · 최대 20MB</p>
+          <button class="btn-outline" onclick="document.getElementById('fileInput').click()">
+            파일 선택
+          </button>
+        </div>
+        <div class="upload-preview hidden" id="uploadPreview">
+          <img id="previewImg" src="" alt="악보 미리보기" />
+          <div class="preview-overlay">
+            <button class="btn-sm" onclick="resetUpload()">다시 선택</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="upload-info hidden" id="uploadInfo">
+        <div class="info-row">
+          <span class="info-label">파일명</span>
+          <span class="info-value" id="fileName">—</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">크기</span>
+          <span class="info-value" id="fileSize">—</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">형식</span>
+          <span class="info-value" id="fileType">—</span>
+        </div>
+      </div>
+
+      <div class="section-footer">
+        <button class="btn-primary" id="analyzeBtn" disabled onclick="analyzeScore()">
+          <span class="btn-icon">🤖</span>
+          AI 분석 시작
+        </button>
+      </div>
+    </section>
+
+    <!-- STEP 2: Analysis Result -->
+    <section class="section hidden" id="analysis-section">
+      <div class="section-header">
+        <div class="step-badge">STEP 02</div>
+        <h2 class="section-title">분석 결과</h2>
+        <p class="section-desc">AI가 인식한 악보 정보입니다</p>
+      </div>
+
+      <!-- Loading State -->
+      <div class="loading-state" id="analysisLoading">
+        <div class="loading-animation">
+          <div class="music-note-loader">
+            <span>♩</span><span>♪</span><span>♫</span><span>♬</span>
+          </div>
+          <p class="loading-text">악보를 분석하는 중입니다...</p>
+          <div class="loading-bar">
+            <div class="loading-fill" id="loadingFill"></div>
+          </div>
+          <p class="loading-sub" id="loadingStatus">이미지를 AI에 전송 중...</p>
+        </div>
+      </div>
+
+      <!-- Result State -->
+      <div class="analysis-result hidden" id="analysisResult">
+
+        <!-- Verification Header -->
+        <div class="verify-header">
+          <div class="verify-title-row">
+            <h3 class="verify-title">인식 결과 확인</h3>
+            <div class="verify-confidence" id="verifyConfidence">
+              <span class="confidence-label">신뢰도</span>
+              <div class="confidence-bar">
+                <div class="confidence-fill" id="confidenceFill" style="width:0%"></div>
+              </div>
+              <span class="confidence-value" id="confidenceValue">—%</span>
+            </div>
+          </div>
+          <p class="verify-desc">아래 인식된 정보가 원본 악보와 일치하는지 확인하세요</p>
+        </div>
+
+        <!-- Verification: Image + Summary Side-by-side -->
+        <div class="verify-layout">
+          <div class="verify-image-panel" id="verifyImagePanel">
+            <div class="verify-image-label">업로드한 악보</div>
+            <div class="verify-image-wrap" id="verifyImageWrap">
+              <img id="verifyPreviewImg" src="" alt="업로드된 악보" />
+              <div class="verify-image-placeholder" id="verifyImagePlaceholder">
+                <span>🎼</span>
+                <p>악보 파일</p>
+              </div>
+            </div>
+          </div>
+          <div class="verify-summary-panel">
+            <div class="verify-summary-title">인식된 핵심 정보</div>
+            <div class="verify-summary-grid">
+              <div class="verify-item primary">
+                <div class="verify-item-icon">🎵</div>
+                <div class="verify-item-body">
+                  <span class="verify-item-label">조성 (Key)</span>
+                  <span class="verify-item-value" id="detectedKey">—</span>
+                  <span class="verify-item-sub" id="detectedScale">—</span>
+                </div>
+              </div>
+              <div class="verify-item">
+                <div class="verify-item-icon">⏱️</div>
+                <div class="verify-item-body">
+                  <span class="verify-item-label">박자 (Time)</span>
+                  <span class="verify-item-value" id="timeSignature">—</span>
+                </div>
+              </div>
+              <div class="verify-item">
+                <div class="verify-item-icon">🎚️</div>
+                <div class="verify-item-body">
+                  <span class="verify-item-label">템포 (BPM)</span>
+                  <span class="verify-item-value" id="tempoValue">—</span>
+                </div>
+              </div>
+              <div class="verify-item">
+                <div class="verify-item-icon">🎼</div>
+                <div class="verify-item-body">
+                  <span class="verify-item-label">음자리표</span>
+                  <span class="verify-item-value" id="clefValue">—</span>
+                </div>
+              </div>
+              <div class="verify-item">
+                <div class="verify-item-icon">🎹</div>
+                <div class="verify-item-body">
+                  <span class="verify-item-label">음표 수</span>
+                  <span class="verify-item-value" id="noteCount">—</span>
+                </div>
+              </div>
+              <div class="verify-item">
+                <div class="verify-item-icon">📐</div>
+                <div class="verify-item-body">
+                  <span class="verify-item-label">마디 수</span>
+                  <span class="verify-item-value" id="measureCount">—</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- OMR Detection Result (오선지 인식) -->
+        <div class="omr-panel hidden" id="omrPanel">
+          <div class="panel-header" onclick="toggleOmrPanel()">
+            <h3>오선지 인식 결과 (OMR)</h3>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="panel-badge omr-badge" id="omrBadge">—</span>
+              <span class="panel-toggle" id="omrToggle">▲ 접기</span>
+            </div>
+          </div>
+          <div class="omr-content" id="omrContent">
+            <div class="omr-layout">
+              <div class="omr-image-section">
+                <div class="omr-image-label">감지된 오선/음표 시각화</div>
+                <div class="omr-image-wrap">
+                  <img id="omrAnnotatedImg" src="" alt="OMR 분석 결과" />
+                </div>
+              </div>
+              <div class="omr-info-section">
+                <div class="omr-stats">
+                  <div class="omr-stat">
+                    <span class="omr-stat-value" id="omrStaffCount">0</span>
+                    <span class="omr-stat-label">오선 수</span>
+                  </div>
+                  <div class="omr-stat">
+                    <span class="omr-stat-value" id="omrNoteCount">0</span>
+                    <span class="omr-stat-label">감지 음표</span>
+                  </div>
+                  <div class="omr-stat">
+                    <span class="omr-stat-value" id="omrMeasureCount">0</span>
+                    <span class="omr-stat-label">마디 수</span>
+                  </div>
+                  <div class="omr-stat">
+                    <span class="omr-stat-value" id="omrConfidence">0%</span>
+                    <span class="omr-stat-label">OMR 신뢰도</span>
+                  </div>
+                </div>
+                <div class="omr-notes-list" id="omrNotesList"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Measure-by-Measure Breakdown -->
+        <div class="measure-breakdown-panel" id="measureBreakdown">
+          <div class="panel-header" onclick="toggleMeasureBreakdown()">
+            <h3>마디별 음표 구성</h3>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="panel-badge" id="measureBadge">0 마디</span>
+              <span class="panel-toggle" id="measureToggle">▼ 펼치기</span>
+            </div>
+          </div>
+          <div class="measure-breakdown-content hidden" id="measureBreakdownContent"></div>
+        </div>
+
+        <!-- Solfege Summary (계이름 요약) -->
+        <div class="solfege-panel" id="solfegePanel">
+          <div class="panel-header">
+            <h3>계이름 보기</h3>
+            <span class="panel-badge" id="solfegeBadge">0개</span>
+          </div>
+          <div class="solfege-flow" id="solfegeFlow"></div>
+        </div>
+
+        <!-- Notes Table -->
+        <div class="notes-panel">
+          <div class="panel-header">
+            <h3>인식된 음표 상세</h3>
+            <span class="panel-badge" id="notesBadge">0개</span>
+          </div>
+          <div class="notes-scroll">
+            <table class="notes-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>음이름</th>
+                  <th>계이름</th>
+                  <th>옥타브</th>
+                  <th>음길이</th>
+                  <th>마디</th>
+                </tr>
+              </thead>
+              <tbody id="notesTableBody">
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Original Score Render -->
+        <div class="score-panel">
+          <div class="panel-header">
+            <h3>원본 악보 렌더링</h3>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="panel-badge" id="originalKeyBadge">원본</span>
+              <button class="btn-sm" style="font-size:12px;padding:4px 12px;cursor:pointer;background:var(--accent);color:#fff;border:none;border-radius:8px;" onclick="document.getElementById('transpose-section').scrollIntoView({behavior:'smooth'})">
+                조 변환하기 →
+              </button>
+            </div>
+          </div>
+          <div class="score-render-area" id="originalScoreRender"></div>
+        </div>
+
+        <!-- AI Raw Analysis -->
+        <div class="ai-panel">
+          <div class="panel-header" onclick="toggleRawAnalysis()">
+            <h3>AI 원문 분석</h3>
+            <span class="panel-toggle" id="rawToggle">▼ 펼치기</span>
+          </div>
+          <div class="ai-raw hidden" id="aiRawContent"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 3: Transpose -->
+    <section class="section hidden" id="transpose-section">
+      <div class="section-header">
+        <div class="step-badge">STEP 03</div>
+        <h2 class="section-title">조 변환</h2>
+        <p class="section-desc">변환할 조성을 선택하세요</p>
+      </div>
+
+      <div class="transpose-panel">
+        <!-- Current Key Display -->
+        <div class="key-display">
+          <div class="key-box original">
+            <div class="key-label">현재 조</div>
+            <div class="key-name" id="currentKeyDisplay">C Major</div>
+            <div class="key-accidentals" id="currentAccidentals"></div>
+          </div>
+          <div class="transpose-arrow">
+            <div class="arrow-line"></div>
+            <div class="semitone-badge" id="semitoneBadge">+0 반음</div>
+            <div class="arrow-head">→</div>
+          </div>
+          <div class="key-box target">
+            <div class="key-label">변환 조</div>
+            <div class="key-name" id="targetKeyDisplay">C Major</div>
+            <div class="key-accidentals" id="targetAccidentals"></div>
+          </div>
+        </div>
+
+        <!-- Key Selector -->
+        <div class="key-selector-grid">
+          <div class="selector-section">
+            <h4>Major (장조)</h4>
+            <div class="key-buttons" id="majorKeys"></div>
+          </div>
+          <div class="selector-section">
+            <h4>Minor (단조)</h4>
+            <div class="key-buttons" id="minorKeys"></div>
+          </div>
+        </div>
+
+        <!-- Semitone Slider -->
+        <div class="semitone-slider-section">
+          <label class="slider-label">반음 단위 조절</label>
+          <div class="slider-wrapper">
+            <span class="slider-min">-12</span>
+            <input type="range" id="semitoneSlider" min="-12" max="12" value="0" class="slider" oninput="updateSemitone(this.value)" />
+            <span class="slider-max">+12</span>
+          </div>
+          <div class="slider-value" id="sliderValueDisplay">0 반음</div>
+        </div>
+
+        <!-- Transpose Options -->
+        <div class="transpose-options">
+          <label class="option-row">
+            <input type="checkbox" id="maintainOctave" checked />
+            <span class="option-label">옥타브 유지</span>
+          </label>
+          <label class="option-row">
+            <input type="checkbox" id="useFlats" />
+            <span class="option-label">플랫(♭) 표기 우선</span>
+          </label>
+          <label class="option-row">
+            <input type="checkbox" id="showComparison" checked />
+            <span class="option-label">전후 비교 표시</span>
+          </label>
+        </div>
+
+        <button class="btn-primary btn-large" id="transposeBtn" onclick="transposeScore()">
+          <span class="btn-icon">🔄</span>
+          조 변환 실행
+        </button>
+      </div>
+    </section>
+
+    <!-- STEP 4: Output -->
+    <section class="section hidden" id="output-section">
+      <div class="section-header">
+        <div class="step-badge">STEP 04</div>
+        <h2 class="section-title">변환 완료</h2>
+        <p class="section-desc">변환된 악보를 확인하고 다운로드하세요</p>
+      </div>
+
+      <!-- Loading -->
+      <div class="loading-state" id="transposeLoading">
+        <div class="loading-animation">
+          <div class="music-note-loader">
+            <span>♩</span><span>♪</span><span>♫</span><span>♬</span>
+          </div>
+          <p class="loading-text">조를 변환하는 중입니다...</p>
+        </div>
+      </div>
+
+      <!-- Result -->
+      <div class="output-result hidden" id="outputResult">
+        <!-- Comparison Toggle -->
+        <div class="comparison-tabs" id="comparisonTabs">
+          <button class="tab-btn active" onclick="showTab('original')">원본</button>
+          <button class="tab-btn" onclick="showTab('transposed')">변환본</button>
+          <button class="tab-btn" onclick="showTab('side-by-side')">나란히 보기</button>
+        </div>
+
+        <!-- Tab Contents -->
+        <div class="tab-content active" id="tab-original">
+          <div class="output-score-panel">
+            <div class="output-panel-header">
+              <span class="output-key-badge original" id="outputOriginalKey">C Major</span>
+              <span>원본 악보</span>
+            </div>
+            <div class="score-render-area large" id="outputOriginalScore"></div>
+          </div>
+        </div>
+
+        <div class="tab-content hidden" id="tab-transposed">
+          <div class="output-score-panel">
+            <div class="output-panel-header">
+              <span class="output-key-badge transposed" id="outputTransposedKey">G Major</span>
+              <span>변환된 악보</span>
+            </div>
+            <div class="score-render-area large" id="outputTransposedScore"></div>
+          </div>
+        </div>
+
+        <div class="tab-content hidden" id="tab-side-by-side">
+          <div class="side-by-side-grid">
+            <div class="output-score-panel">
+              <div class="output-panel-header">
+                <span class="output-key-badge original" id="sbOriginalKey">C Major</span>
+                <span>원본</span>
+              </div>
+              <div class="score-render-area" id="sbOriginalScore"></div>
+            </div>
+            <div class="output-score-panel">
+              <div class="output-panel-header">
+                <span class="output-key-badge transposed" id="sbTransposedKey">G Major</span>
+                <span>변환본</span>
+              </div>
+              <div class="score-render-area" id="sbTransposedScore"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Notes Comparison Table -->
+        <div class="notes-comparison-panel">
+          <div class="panel-header">
+            <h3>음표 변환 대조표</h3>
+          </div>
+          <div class="notes-scroll">
+            <table class="notes-table comparison-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>원본 음표</th>
+                  <th>→</th>
+                  <th>변환 음표</th>
+                  <th>음길이</th>
+                  <th>마디</th>
+                </tr>
+              </thead>
+              <tbody id="comparisonTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Download Panel -->
+        <div class="download-panel">
+          <h3>다운로드</h3>
+          <div class="download-buttons">
+            <button class="btn-download" onclick="downloadScore('png')">
+              <span class="dl-icon">🖼️</span>
+              <span class="dl-text">
+                <strong>PNG 이미지</strong>
+                <small>고해상도 악보 이미지</small>
+              </span>
+            </button>
+            <button class="btn-download" onclick="downloadScore('svg')">
+              <span class="dl-icon">📐</span>
+              <span class="dl-text">
+                <strong>SVG 벡터</strong>
+                <small>확대해도 선명한 형식</small>
+              </span>
+            </button>
+            <button class="btn-download" onclick="downloadScore('json')">
+              <span class="dl-icon">📋</span>
+              <span class="dl-text">
+                <strong>JSON 데이터</strong>
+                <small>음표 데이터 내보내기</small>
+              </span>
+            </button>
+            <button class="btn-download" onclick="downloadScore('musicxml')">
+              <span class="dl-icon">🎼</span>
+              <span class="dl-text">
+                <strong>MusicXML</strong>
+                <small>악보 편집기 호환 형식</small>
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <!-- New Analysis Button -->
+        <div class="section-footer center">
+          <button class="btn-outline btn-large" onclick="resetAll()">
+            ↩ 새 악보 분석하기
+          </button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===== TOAST NOTIFICATION ===== -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <div class="footer-inner">
+      <span class="footer-logo">♪ ScoreShift</span>
+      <span class="footer-tech">Powered by Claude Vision · music21 · VexFlow</span>
+      <span class="footer-copy">Built with ♥ for Musicians</span>
+    </div>
+  </footer>
+
+  <script src="js/vexflow-handler.js"></script>
+  <script src="js/api.js?v=3"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

@@ -60,6 +60,21 @@ except ImportError as e:
     OMR_AVAILABLE = False
     logger.warning(f"⚠️  OMR 엔진 미사용: {e}")
 
+# ── 공용 비밀번호 로그인 (APP_PASSWORD / ADMIN_PASSWORD) ──────
+from auth import auth_enabled, auth_middleware, router as auth_router
+
+app.middleware("http")(auth_middleware)
+app.include_router(auth_router, prefix="/api")
+logger.info("🔒 비밀번호 로그인 사용" if auth_enabled() else "🔓 로그인 없이 사용 (APP_PASSWORD 미설정)")
+
+# ── 악보 라이브러리 (PDF 업로드/OCR/필기) ─────────────────────
+from db import init_db
+from library import router as library_router
+
+init_db()
+app.include_router(library_router, prefix="/api")
+logger.info("✅ 악보 라이브러리 API 등록 (/api/scores)")
+
 # ── Anthropic Claude 임포트 (설치된 경우) ─────────────────────
 try:
     import anthropic
@@ -81,6 +96,7 @@ class NoteData(BaseModel):
     pitch: str = "C"
     octave: int = 4
     duration: str = "q"
+    dotted: bool = False
     measure: int = 1
     beat: float = 1.0
     type: str = "note"        # "note" | "rest"
@@ -185,12 +201,15 @@ def transpose_with_music21(notes: list, semitones: int, use_flats: bool = False)
             })
     return result
 
-def dur_to_ql(dur: str) -> float:
+def dur_to_ql(dur: str, dotted: bool = False) -> float:
     """duration 문자열 → quarterLength"""
     m = {'w': 4, 'whole': 4, '1': 4, 'h': 2, 'half': 2, '2': 2,
          'q': 1, 'quarter': 1, '4': 1, '8': 0.5, 'eighth': 0.5,
-         '16': 0.25, 'sixteenth': 0.25}
-    return m.get(str(dur), 1.0)
+         '16': 0.25, 'sixteenth': 0.25, '32': 0.125}
+    ql = m.get(str(dur), 1.0)
+    if dotted:
+        ql *= 1.5
+    return ql
 
 def ql_to_dur(ql: float) -> str:
     m = {4: 'w', 2: 'h', 1: 'q', 0.5: '8', 0.25: '16'}
@@ -346,10 +365,81 @@ def analyze_with_music21(file_data: bytes, filename: str) -> dict:
 #   AI 악보 분석 (Claude Vision)
 # ═══════════════════════════════════════════════════════════════
 
-ANALYSIS_PROMPT = """당신은 전문 음악 이론가이자 악보 분석 AI입니다.
-첨부된 악보 이미지를 분석하여 아래 JSON 형식으로 정확하게 응답하세요.
+ANALYSIS_PROMPT = """당신은 세계 최고 수준의 음악 이론가이자 악보 판독 전문가입니다.
+첨부된 악보 이미지를 아래의 단계별 절차에 따라 정밀하게 분석해주세요.
 
-응답 형식 (JSON만 반환, 다른 텍스트 없음):
+## 분석 단계 (반드시 순서대로 수행):
+
+### 1단계: 기본 정보 확인
+- **음자리표**: 높은음자리표(Treble Clef, 소용돌이 모양 G자) 또는 낮은음자리표(Bass Clef, F자 모양)
+- **조표(Key Signature)**:
+  * 샵(#) 개수: 0=C장조, 1=G장조, 2=D장조, 3=A장조, 4=E장조, 5=B장조, 6=F#장조, 7=C#장조
+  * 플랫(♭) 개수: 1=F장조, 2=Bb장조, 3=Eb장조, 4=Ab장조, 5=Db장조, 6=Gb장조
+  * 단조는 장조보다 단3도 낮음 (G장조 → E단조)
+- **박자표**: 4/4, 3/4, 2/4, 6/8, 12/8 등 분수 형태
+
+### 2단계: 마디 구분
+- 세로 마디선(barline)을 기준으로 마디 번호 부여 (1부터 시작)
+- 이중 세로선(double barline)도 마디선으로 처리
+
+### 3단계: 오선 위치 → 음이름 변환
+
+#### 높은음자리표(Treble Clef) 기준 - 아래에서 위 순서:
+| 위치 | 음이름 | 계이름 |
+|------|--------|--------|
+| 첫째줄 아래 둘째 덧줄 | C4 | 도 |
+| 첫째줄 아래 첫째 덧줄 | C4 | 도 (가운데 도) |
+| 첫째줄 아래 덧줄 위 칸 | D4 | 레 |
+| **첫째줄** | **E4** | **미** |
+| 첫째칸 | F4 | 파 |
+| **둘째줄** | **G4** | **솔** |
+| 둘째칸 | A4 | 라 |
+| **셋째줄** | **B4** | **시** |
+| 셋째칸 | C5 | 도 |
+| **넷째줄** | **D5** | **레** |
+| 넷째칸 | E5 | 미 |
+| **다섯째줄** | **F5** | **파** |
+| 다섯째줄 위 첫째 칸 | G5 | 솔 |
+| 다섯째줄 위 첫째 덧줄 | A5 | 라 |
+
+#### 낮은음자리표(Bass Clef) 기준 - 아래에서 위 순서:
+- 첫째줄: G2(솔), 첫째칸: A2(라)
+- 둘째줄: B2(시), 둘째칸: C3(도)
+- 셋째줄: D3(레), 셋째칸: E3(미)
+- 넷째줄: F3(파), 넷째칸: G3(솔)
+- 다섯째줄: A3(라)
+
+### 4단계: 음표 모양 → 음길이 변환
+| 모양 | 음길이 | 코드 |
+|------|--------|------|
+| 타원형, 속 빔, 줄기 없음 | 온음표 | "w" |
+| 타원형, 속 빔, 줄기 있음 | 2분음표 | "h" |
+| 타원형, 속 검정, 줄기 있음, 꼬리 없음 | 4분음표 | "q" |
+| 타원형, 속 검정, 줄기 + 꼬리 1개 or 보 1줄 | 8분음표 | "8" |
+| 타원형, 속 검정, 줄기 + 꼬리 2개 or 보 2줄 | 16분음표 | "16" |
+| 타원형, 속 검정, 줄기 + 꼬리 3개 or 보 3줄 | 32분음표 | "32" |
+- **점음표**: 음표 오른쪽에 점(·) → "dotted": true (원래 길이의 1.5배)
+
+### 5단계: 쉼표 판독
+- 온쉼표(whole rest): 넷째줄 아래 매달린 직사각형
+- 2분쉼표(half rest): 셋째줄 위에 놓인 직사각형
+- 4분쉼표(quarter rest): 지그재그 모양 기호
+- 8분쉼표(eighth rest): 7자 혹은 구불구불한 기호
+- type을 "rest"로, pitch는 "B", octave는 4로 설정
+
+### 6단계: 임시표(Accidentals) 확인
+- 음표 바로 왼쪽에 위치
+- "#": 올림표 (반음 올림)
+- "b": 내림표 (반음 내림)
+- "n" or "♮": 제자리표 (조표 취소)
+
+### 7단계: 박자 위치(beat) 계산
+박자표에 따라 각 음표의 마디 내 박자 위치 계산:
+- 첫 음표는 항상 beat=1.0
+- 4분음표=1박, 2분음표=2박, 온음표=4박, 8분음표=0.5박, 16분음표=0.25박
+- 점음표면 1.5배 (점4분=1.5박, 점8분=0.75박)
+
+## 출력 형식 (JSON만, 다른 텍스트 절대 없이):
 {
   "key": "C",
   "scale": "Major",
@@ -361,24 +451,29 @@ ANALYSIS_PROMPT = """당신은 전문 음악 이론가이자 악보 분석 AI입
       "pitch": "C",
       "octave": 4,
       "duration": "q",
+      "dotted": false,
       "measure": 1,
       "beat": 1.0,
       "type": "note",
       "accidental": null
     }
   ],
-  "raw_analysis": "악보에 대한 자세한 설명",
-  "confidence": 0.9
+  "raw_analysis": "악보 전체에 대한 상세한 분석 설명 (조성, 박자, 각 마디 내용 포함)",
+  "confidence": 0.95
 }
 
-규칙:
-- key: 조성의 루트 음 (C, G, D, A, E, B, F#, F, Bb, Eb, Ab, Db 중 하나)
+## 최종 규칙:
+- key: C, G, D, A, E, B, F#, C#, F, Bb, Eb, Ab, Db, Gb, Cb 중 하나
 - scale: "Major" 또는 "Minor"
-- duration: "w"(온음), "h"(2분), "q"(4분), "8"(8분), "16"(16분)
-- octave: 국제 표준 옥타브 번호 (보통 3-6)
+- clef: "treble" 또는 "bass"
+- duration: "w", "h", "q", "8", "16", "32" 중 하나
+- dotted: true 또는 false (기본값 false)
+- octave: 국제 표준 옥타브 번호 (가운데 C = C4)
 - accidental: null, "#", "b", "n" 중 하나
 - type: "note" 또는 "rest"
-- confidence: 분석 확신도 (0.0-1.0)"""
+- **모든 음표와 쉼표를 왼→오른쪽, 위→아래 오선 순서로 빠짐없이 기록**
+- **각 마디의 박자 합계가 박자표와 일치하는지 최종 검증**
+- confidence: 분석의 전반적 신뢰도 0.0~1.0"""
 
 async def analyze_with_ai(image_data: bytes, mime_type: str) -> dict:
     """Claude Vision으로 악보 분석"""
@@ -628,21 +723,14 @@ async def get_keys():
     }
 
 # ═══════════════════════════════════════════════════════════════
-#   프론트엔드 정적 파일 서빙
+#   프론트엔드 정적 파일 서빙 (모든 API 라우트 등록 이후, 항상 마지막에 mount)
 # ═══════════════════════════════════════════════════════════════
-FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
-if os.path.isdir(FRONTEND_DIR):
-    from fastapi.responses import FileResponse
-
-    @app.get("/")
-    async def serve_index():
-        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
-
-    app.mount("/css", StaticFiles(directory=os.path.join(FRONTEND_DIR, "css")), name="css")
-    app.mount("/js", StaticFiles(directory=os.path.join(FRONTEND_DIR, "js")), name="js")
-    if os.path.isdir(os.path.join(FRONTEND_DIR, "assets")):
-        app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIR, "assets")), name="assets")
-    logger.info(f"✅ 프론트엔드 서빙: {FRONTEND_DIR}")
+DOCS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs")
+if os.path.isdir(DOCS_DIR):
+    # html=True: index.html을 "/"에서 자동 서빙하고, transpose.html/viewer.html 등
+    # docs/ 아래 다른 정적 파일도 파일명 그대로 서빙한다.
+    app.mount("/", StaticFiles(directory=DOCS_DIR, html=True), name="docs")
+    logger.info(f"✅ 프론트엔드 서빙: {DOCS_DIR}")
 
 # ═══════════════════════════════════════════════════════════════
 #   실행
