@@ -15,6 +15,7 @@
 import hashlib
 import hmac
 import logging
+import math
 import os
 import re
 import time
@@ -46,6 +47,28 @@ MEMBER_WRITE_PATTERNS = [
 ]
 
 _failures: dict = {}  # ip -> [실패 횟수, 마지막 실패 시각] (무차별 대입 방지)
+_global_failures: list = []  # 최근 실패 시각들 (IP를 바꿔가며 시도하는 공격 대비)
+
+# 같은 IP에서 틀린 횟수가 쌓일수록 더 오래 잠근다: (누적 실패 수, 잠금 초)
+LOCKOUT_STEPS = [(20, 24 * 3600), (15, 3600), (10, 600), (5, 60)]
+FAILURE_RESET_SECONDS = 24 * 3600
+GLOBAL_WINDOW, GLOBAL_LIMIT, GLOBAL_LOCK = 600, 50, 300  # 10분에 50번 이상 틀리면 5분간 전체 잠금
+
+
+def _lock_seconds(count: int) -> int:
+    for threshold, seconds in LOCKOUT_STEPS:
+        if count >= threshold:
+            return seconds
+    return 0
+
+
+def _human(seconds: float) -> str:
+    seconds = max(1, math.ceil(seconds))
+    if seconds >= 3600:
+        return f"{math.ceil(seconds / 3600)}시간"
+    if seconds >= 60:
+        return f"{math.ceil(seconds / 60)}분"
+    return f"{seconds}초"
 
 
 def _app_password() -> str:
@@ -136,12 +159,18 @@ def _quote(s: str) -> str:
 
 
 def _client_ip(request: Request) -> str:
+    # Cloudflare 터널로 들어온 요청은 실제 접속자 IP가 CF-Connecting-IP에 담긴다
+    cf = request.headers.get("cf-connecting-ip", "").strip()
+    if cf:
+        return cf
     fwd = request.headers.get("x-forwarded-for", "")
     return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "?")
 
 
 def _is_https(request: Request) -> bool:
-    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "") == "https"
+    return (request.url.scheme == "https"
+            or request.headers.get("x-forwarded-proto", "") == "https"
+            or '"https"' in request.headers.get("cf-visitor", ""))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -158,9 +187,16 @@ def login(req: LoginRequest, request: Request):
         return {"role": "admin", "auth": False}
 
     ip = _client_ip(request)
+    now = time.time()
     count, last = _failures.get(ip, [0, 0])
-    if count >= 5 and time.time() - last < 60:
-        return JSONResponse({"detail": "비밀번호를 여러 번 틀렸어요. 1분 뒤에 다시 시도해주세요."}, status_code=429)
+    if count and now - last > FAILURE_RESET_SECONDS:
+        count = 0
+    wait = _lock_seconds(count) - (now - last)
+    if wait > 0:
+        return JSONResponse({"detail": f"비밀번호를 여러 번 틀렸어요. {_human(wait)} 뒤에 다시 시도해주세요."}, status_code=429)
+    _global_failures[:] = [t for t in _global_failures if now - t < GLOBAL_WINDOW]
+    if len(_global_failures) >= GLOBAL_LIMIT and now - _global_failures[-1] < GLOBAL_LOCK:
+        return JSONResponse({"detail": "로그인 시도가 너무 많아요. 잠시 뒤에 다시 시도해주세요."}, status_code=429)
 
     pw = (req.password or "").strip()
     role = None
@@ -170,7 +206,8 @@ def login(req: LoginRequest, request: Request):
         role = "member"
 
     if role is None:
-        _failures[ip] = [count + 1, time.time()]
+        _failures[ip] = [count + 1, now]
+        _global_failures.append(now)
         logger.warning(f"🔒 로그인 실패 ({ip})")
         return JSONResponse({"detail": "비밀번호가 맞지 않아요"}, status_code=401)
 
