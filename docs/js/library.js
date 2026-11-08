@@ -26,7 +26,14 @@ const LibState = {
   selectedMark: null,     // 즐겨찾기 필터
   selectedSection: null,  // 'before'(설교 전) | 'after'(설교 후)
   selectedTempo: null,    // 'slow' | 'fast'
+  contiCat: null,         // 콘티 목록 분류 필터: before | after | slow | fast
+  contiMark: null,        // 콘티 목록 즐겨찾기 필터
+  contiMarkOpen: null,    // 표시 고르기를 펼친 콘티 id
 };
+
+/** 콘티 즐겨찾기는 곡 즐겨찾기와 같은 저장소에 'conti:<id>' 로 */
+const contiMarkKey = id => `conti:${id}`;
+const isContiMarkKey = k => k.startsWith('conti:');
 
 const SECTION_LABEL = { before: '설교 전', after: '설교 후' };
 const TEMPO_LABEL = { slow: '느린', fast: '빠른' };
@@ -259,7 +266,9 @@ function renderMarkChips() {
   const el = document.getElementById('markFilterChips');
   if (!row || !el) return;
   const counts = new Map();
-  Object.values(LibState.marks).forEach(ms => ms.forEach(m => counts.set(m, (counts.get(m) || 0) + 1)));
+  Object.entries(LibState.marks).forEach(([k, ms]) => {
+    if (!isContiMarkKey(k)) ms.forEach(m => counts.set(m, (counts.get(m) || 0) + 1));
+  });
   const used = LibState.palette.filter(m => counts.has(m));
   if (!used.length) {
     el.innerHTML = '<span class="lib-chord-empty">곡을 눌러 ⭐❤️🔵🟩 같은 표시를 붙이면 여기서 바로 모아볼 수 있어요</span>';
@@ -298,7 +307,14 @@ async function toggleSongMark(groupKey, mark) {
 function rerenderMarks() {
   renderMarkChips();
   renderSongs();
+  renderContis();
   if (LibState.modal?.type === 'song') renderSongModal();
+  // 콘티 화면은 고치던 내용이 사라지지 않게 버튼만 바꾼다
+  document.querySelectorAll('#libModalBody [data-action="toggle-song-mark"]').forEach(b => {
+    const on = marksOf(b.dataset.group).includes(b.dataset.mark);
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on);
+  });
 }
 
 function renderCategoryChips() {
@@ -664,30 +680,82 @@ async function saveSong(id, form) {
 /* ============================================================
    콘티 목록
    ============================================================ */
+const CONTI_CATS = [
+  ['before', '🙏 설교 전', s => s.section === 'before'],
+  ['after', '🕊 설교 후', s => s.section === 'after'],
+  ['slow', '🐢 느린', s => s.tempo === 'slow'],
+  ['fast', '🐇 빠른', s => s.tempo === 'fast'],
+];
+const contiCatTest = val => (CONTI_CATS.find(c => c[0] === val) || [])[2];
+
+function renderContiFilters(base) {
+  const catEl = document.getElementById('contiCatChips');
+  const markEl = document.getElementById('contiMarkChips');
+  if (!catEl || !markEl) return;
+  // 분류 숫자는 지금 고른 즐겨찾기 안에서, 즐겨찾기 숫자는 지금 고른 분류 안에서 센다
+  const inMark = base.filter(c => !LibState.contiMark || marksOf(contiMarkKey(c.id)).includes(LibState.contiMark));
+  const inCat = base.filter(c => !LibState.contiCat || c.songs.some(contiCatTest(LibState.contiCat)));
+  catEl.innerHTML = `<button type="button" class="lib-chord-chip${LibState.contiCat ? '' : ' active'}" data-action="conti-cat" data-val="">전체</button>`
+    + CONTI_CATS.map(([val, label, test]) => `<button type="button" class="lib-chord-chip cat-chip cat-${val}${LibState.contiCat === val ? ' active' : ''}"
+        data-action="conti-cat" data-val="${val}">${label} <span class="lib-chip-count">${inMark.filter(c => c.songs.some(test)).length}</span></button>`).join('');
+  const counts = new Map();
+  inCat.forEach(c => marksOf(contiMarkKey(c.id)).forEach(m => counts.set(m, (counts.get(m) || 0) + 1)));
+  const anyUsed = new Set(base.flatMap(c => marksOf(contiMarkKey(c.id))));
+  const used = LibState.palette.filter(m => anyUsed.has(m) || LibState.contiMark === m);
+  markEl.innerHTML = used.length
+    ? `<button type="button" class="lib-chord-chip${LibState.contiMark ? '' : ' active'}" data-action="conti-mark-filter" data-mark="">전체</button>`
+      + used.map(m => `<button type="button" class="lib-chord-chip mark-chip${LibState.contiMark === m ? ' active' : ''}"
+          data-action="conti-mark-filter" data-mark="${escapeHtml(m)}">${m} <span class="lib-chip-count">${counts.get(m) || 0}</span></button>`).join('')
+    : '<span class="lib-chord-empty">콘티 옆 "☆ 표시"를 눌러 ⭐❤️ 같은 표시를 붙이면 여기서 모아볼 수 있어요</span>';
+}
+
+function contiMarkPicker(c) {
+  const mine = new Set(marksOf(contiMarkKey(c.id)));
+  const open = LibState.contiMarkOpen === c.id;
+  return `<div class="conti-mark-row">
+    <button type="button" class="btn-sm conti-mark-toggle" data-action="conti-mark-open" data-id="${c.id}" aria-expanded="${open}">${mine.size ? [...mine].join('') : '☆'} 표시</button>
+    ${open ? `<span class="conti-mark-pick">${LibState.palette.map(m => `<button type="button" class="mark-btn${mine.has(m) ? ' on' : ''}"
+        data-action="toggle-song-mark" data-group="${contiMarkKey(c.id)}" data-mark="${escapeHtml(m)}" aria-pressed="${mine.has(m)}">${m}</button>`).join('')}</span>` : ''}
+  </div>`;
+}
+
 function renderContis() {
   const list = document.getElementById('contiList');
   const empty = document.getElementById('contisEmpty');
+  renderContiFilters(LibState.contis);
   if (!LibState.contis.length) {
     list.innerHTML = '';
     empty.classList.remove('hidden');
+    document.getElementById('contisCount').textContent = '';
     return;
   }
   empty.classList.add('hidden');
+  const test = contiCatTest(LibState.contiCat);
+  const shown = LibState.contis.filter(c =>
+    (!test || c.songs.some(test)) && (!LibState.contiMark || marksOf(contiMarkKey(c.id)).includes(LibState.contiMark)));
+  const filtered = test || LibState.contiMark;
+  document.getElementById('contisCount').textContent = filtered
+    ? `${LibState.contiMark || ''} ${LibState.contiCat ? CONTI_CATS.find(x => x[0] === LibState.contiCat)[1] : ''} 콘티 ${shown.length}개`.trim()
+    : `콘티 ${shown.length}개`;
   const pendingCount = LibState.contis.filter(c => !c.confirmed).length;
   list.innerHTML = (pendingCount ? `
     <div class="review-banner compact">
       <span>🆕 업로드 후 확인하지 않은 콘티가 <b>${pendingCount}개</b> 있어요. 확인해야 라이브러리 검색에 나와요.</span>
       <button class="btn-primary btn-compact" data-action="review-next">확인하러 가기</button>
-    </div>` : '') + LibState.contis.map(c => `
+    </div>` : '') + (shown.length ? '' : '<p class="lib-chord-empty conti-filter-empty">조건에 맞는 콘티가 없어요. 위에서 "전체"를 눌러보세요.</p>')
+    + shown.map(c => {
+      const marks = marksOf(contiMarkKey(c.id));
+      return `
     <div class="conti-row${c.confirmed ? '' : ' pending'}">
       <div class="conti-thumb lib-card-thumb" data-action="open-conti" data-id="${c.id}">${img(c.thumbnail_url, c.title)}</div>
       <div class="conti-info">
-        <p class="conti-title" data-action="open-conti" data-id="${c.id}">${(c.overlaps || []).some(o => o.kind !== 'partial') ? '<span class="pending-badge dup">겹치는 콘티</span> ' : ''}${c.status === 'processing' ? `<span class="pending-badge processing">분석 중 ${escapeHtml(c.status_detail || '')}</span> ` : c.confirmed ? '' : '<span class="pending-badge">확인 필요</span> '}${escapeHtml(c.title)}</p>
+        <p class="conti-title" data-action="open-conti" data-id="${c.id}">${marks.length ? `<span class="card-marks">${marks.join('')}</span> ` : ''}${(c.overlaps || []).some(o => o.kind !== 'partial') ? '<span class="pending-badge dup">겹치는 콘티</span> ' : ''}${c.status === 'processing' ? `<span class="pending-badge processing">분석 중 ${escapeHtml(c.status_detail || '')}</span> ` : c.confirmed ? '' : '<span class="pending-badge">확인 필요</span> '}${escapeHtml(c.title)}</p>
         <p class="song-meta">${c.conti_date ? `📅 ${escapeHtml(c.conti_date)} · ` : ''}${c.songs.length}곡 · ${c.page_count}페이지</p>
         <div class="conti-songs">
-          ${c.songs.map((s, i) => `<span class="conti-song-chip${s.section ? ' sec-' + s.section : ''}" title="${s.section ? SECTION_LABEL[s.section] : ''}">${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</span>`).join('')
+          ${c.songs.map((s, i) => `<span class="conti-song-chip${s.section ? ' sec-' + s.section : ''}${test ? (test(s) ? ' hit' : ' dim') : ''}" title="${[s.section && SECTION_LABEL[s.section], s.tempo && TEMPO_LABEL[s.tempo]].filter(Boolean).join(' · ')}">${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}${s.tempo === 'slow' ? ' 🐢' : s.tempo === 'fast' ? ' 🐇' : ''}</span>`).join('')
             || '<span class="lib-card-nochords">곡이 없어요 — "곡 나누기·수정"에서 분석해주세요</span>'}
         </div>
+        ${contiMarkPicker(c)}
       </div>
       <div class="conti-actions">
         <button class="btn-sm" data-action="open-conti" data-id="${c.id}">${AuthState.canEdit ? '🧩 곡 나누기·수정' : '📄 악보 보기'}</button>
@@ -695,7 +763,8 @@ function renderContis() {
         <a class="btn-sm" href="viewer.html?id=${c.id}">✍️ 필기</a>
         <button class="btn-sm admin-only" data-action="delete-conti" data-id="${c.id}">🗑️</button>
       </div>
-    </div>`).join('');
+    </div>`;
+    }).join('');
 }
 
 /* ============================================================
@@ -785,6 +854,7 @@ function renderContiModal(conti, songs) {
         ${confirmBtn}
       </div>` : ''}
     ${overlapBanner(conti)}
+    ${markPicker(contiMarkKey(conti.id))}
     <form class="conti-edit-head" data-action-submit="save-conti" data-id="${conti.id}">
       <input type="text" name="title" class="lib-edit-title-input conti-title-input" value="${escapeHtml(conti.title)}" />
       <input type="date" name="conti_date" class="lib-edit-title-input" value="${escapeHtml(conti.conti_date || '')}" />
@@ -1002,6 +1072,7 @@ function renderContiModalReadOnly(conti, songs) {
   document.getElementById('libModalBody').innerHTML = `
     <h2 class="lib-modal-title">${escapeHtml(conti.title)}</h2>
     <p class="lib-modal-sub">${conti.conti_date ? `📅 ${escapeHtml(conti.conti_date)} · ` : ''}${songs.length}곡</p>
+    ${markPicker(contiMarkKey(conti.id))}
     <div class="now-row"><button type="button" class="btn-now" data-live="send-conti">📡 NOW · 지금 이 콘티 띄우기</button></div>
     ${songs.map((s, i) => `
       ${s.section && s.section !== songs[i - 1]?.section ? `<h3 class="conti-section-head sec-${s.section}">${s.section === 'before' ? '🙏 설교 전 찬양' : '🕊 설교 후 찬양'}</h3>` : ''}
@@ -1103,6 +1174,18 @@ function initDelegatedActions() {
         renderSongs();
         break;
       case 'toggle-song-mark': toggleSongMark(el.dataset.group, el.dataset.mark); break;
+      case 'conti-cat':
+        LibState.contiCat = el.dataset.val && LibState.contiCat !== el.dataset.val ? el.dataset.val : null;
+        renderContis();
+        break;
+      case 'conti-mark-filter':
+        LibState.contiMark = el.dataset.mark && LibState.contiMark !== el.dataset.mark ? el.dataset.mark : null;
+        renderContis();
+        break;
+      case 'conti-mark-open':
+        LibState.contiMarkOpen = LibState.contiMarkOpen === id ? null : id;
+        renderContis();
+        break;
       case 'toggle-key': toggleIn(LibState.selectedKeys, el.dataset.key); renderKeyChips(); fetchSongs(); break;
       case 'toggle-chord': toggleIn(LibState.selectedChords, el.dataset.chord); renderChordChips(); fetchSongs(); break;
       case 'edit-song': document.getElementById(`songEdit-${id}`)?.classList.toggle('hidden'); break;

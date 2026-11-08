@@ -1975,3 +1975,12 @@ form.dirty .lib-edit-title-input { border-color: #f59e0b; background: rgba(245,1
 .keep-sheet-btn { white-space: nowrap; }
 .kept-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .song-cats-label { font-size: 12px; opacity: .7; margin-right: 2px; }
+
+/* 콘티 목록: 분류·즐겨찾기 필터 */
+.conti-song-chip.hit { border-color: var(--accent); color: var(--text-primary); font-weight: 600; }
+.conti-song-chip.dim { opacity: .4; }
+.conti-mark-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.conti-mark-toggle { padding: 3px 10px; }
+.conti-mark-pick { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.conti-mark-pick .mark-btn { padding: 2px 8px; }
+.conti-filter-empty { padding: 16px 0; }

@@ -125,6 +125,15 @@
 
     <!-- ===== 콘티 목록 ===== -->
     <section class="lib-grid-section hidden" id="contisPanel">
+      <div class="lib-filter-row">
+        <span class="lib-chord-filter-label">분류</span>
+        <div class="lib-chord-chips" id="contiCatChips"></div>
+      </div>
+      <div class="lib-filter-row">
+        <span class="lib-chord-filter-label">즐겨찾기</span>
+        <div class="lib-chord-chips" id="contiMarkChips"></div>
+      </div>
+      <div class="lib-grid-header"><span id="contisCount" class="lib-grid-count"></span></div>
       <div class="lib-conti-list" id="contiList"></div>
       <div class="lib-empty hidden" id="contisEmpty">
         <span class="lib-empty-icon">📁</span>
@@ -188,7 +197,7 @@
   </footer>
 
   <script src="js/api.js?v=7"></script>
-  <script src="js/library.js?v=9"></script>
+  <script src="js/library.js?v=10"></script>
   <script src="js/live.js?v=7"></script>
 </body>
 </html>
