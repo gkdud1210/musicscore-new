@@ -19,7 +19,7 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="css/style.css?v=11" />
+  <link rel="stylesheet" href="css/style.css?v=13" />
 </head>
 <body>
   <div class="bg-particles" id="bgParticles"></div>
@@ -169,6 +169,7 @@
         <div class="setlist-export-actions">
           <button class="btn-sm" onclick="clearSetlist()">비우기</button>
           <button class="btn-now btn-compact" data-live="send-setlist" title="담은 순서대로 접속한 사람들에게 띄워요">📡 NOW</button>
+          <button class="btn-sm admin-only" id="setlistSaveBtn" onclick="saveSetlistToLibrary()" title="이 콘티를 라이브러리 콘티 목록에 새 콘티로 저장해요">💾 라이브러리에 저장</button>
           <button class="btn-primary" id="setlistExportBtn" onclick="exportSetlist()">⬇️ PDF 내보내기</button>
         </div>
       </div>
@@ -197,9 +198,9 @@
     </div>
   </footer>
 
-  <script src="js/api.js?v=10"></script>
+  <script src="js/api.js?v=12"></script>
   <script src="js/client-upload.js?v=4"></script>
-  <script src="js/library.js?v=13"></script>
+  <script src="js/library.js?v=14"></script>
   <script src="js/live.js?v=9"></script>
   <script src="js/worship.js?v=2"></script>
 </body>

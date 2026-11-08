@@ -57,6 +57,7 @@ $ROUTES = [
     ['POST', '#^/songs/(\d+)/restore$#', 'api_restore_sheet', 'admin'],
 
     ['POST', '#^/setlist/export$#', 'api_export_setlist', 'member_ok'],
+    ['POST', '#^/setlist/save$#', 'api_save_setlist', 'admin'],
     ['GET', '#^/marks$#', 'api_get_marks', 'member'],
     ['POST', '#^/marks$#', 'api_set_marks', 'member_ok'],
     ['GET', '#^/live$#', 'api_get_live', 'member'],

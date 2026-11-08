@@ -1647,6 +1647,32 @@ function initSetlistDrag() {
   });
 }
 
+/** 새 콘티를 라이브러리에 콘티로 저장 (관리자) — 악보 그림을 복사해서 '콘티 목록'에 들어간다 */
+async function saveSetlistToLibrary() {
+  if (!LibState.setlist.length) return;
+  const btn = document.getElementById('setlistSaveBtn');
+  const title = document.getElementById('setlistTitle').value.trim() || nextSundayLabel();
+  if (!confirm(`"${title}" (${LibState.setlist.length}곡)을 라이브러리 콘티 목록에 저장할까요?`)) return;
+  btn.disabled = true;
+  btn.textContent = '저장 중...';
+  try {
+    const conti = await apiJson('/api/setlist/save', jsonBody('POST', {
+      song_ids: LibState.setlist.map(s => s.id),
+      title,
+      include_annotations: document.getElementById('setlistAnnot').checked,
+    }));
+    showToast(`"${conti.title}"을 콘티 목록에 저장했어요 (${conti.page_count}쪽).`, 'success', 5000);
+    await refreshAll();
+    openContiModal(conti.id);
+  } catch (e) {
+    showToast('저장 실패: ' + e.message, 'error');
+    if (/찾을 수 없습니다/.test(e.message)) showToast('삭제된 곡이 목록에 남아 있어요. × 로 빼주세요.', 'warning', 6000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 라이브러리에 저장';
+  }
+}
+
 async function exportSetlist() {
   if (!LibState.setlist.length) return;
   const btn = document.getElementById('setlistExportBtn');

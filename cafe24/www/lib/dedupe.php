@@ -140,8 +140,13 @@ function dedupe_index(): array
     foreach ($sheetOf as $sid => $root) $members[$root][] = (int)$sid;
 
     // 콘티끼리 겹침
+    // '새 콘티'로 만들어 저장한 콘티는 원래 곡들과 겹치는 게 당연하므로 겹침 검사에서 뺀다
+    $fromSetlist = array_flip(array_map('intval', array_column(q_all('SELECT id FROM scores WHERE from_setlist = 1'), 'id')));
     $pagesOf = [];
-    foreach ($cluster as $k => $c) $pagesOf[(int)explode(':', $k)[0]][$c] = true;
+    foreach ($cluster as $k => $c) {
+        $sid = (int)explode(':', $k)[0];
+        if (!isset($fromSetlist[$sid])) $pagesOf[$sid][$c] = true;
+    }
     $holders = [];
     foreach ($pagesOf as $sid => $cs) foreach ($cs as $c => $_) $holders[$c][] = $sid;
     $shared = [];

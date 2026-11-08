@@ -309,6 +309,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (AuthState.server === 'php') {
     document.querySelectorAll('a[href="transpose.html"], #analyzePageBtn').forEach(el => { el.style.display = 'none'; });
   }
+  // 새 콘티를 라이브러리에 저장하기는 카페24 서버에만 있다
+  if (AuthState.server !== 'php') document.getElementById('setlistSaveBtn')?.remove();
   renderHeaderAccount();
   initInstallButton();
   startPresence();
@@ -379,7 +381,7 @@ function initVisitorBadge() {
       const res = await fetch(`${API_BASE}/api/visitors`);
       if (!res.ok) return;
       last = await res.json();
-      btn.textContent = `👀 지금 ${last.now}명`;
+      btn.innerHTML = `👀 <span class="vb-long">지금 </span>${last.now}<span class="vb-long">명</span>`;
       draw();
     } catch { /* 다음에 다시 */ }
   };

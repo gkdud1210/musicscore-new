@@ -642,6 +642,89 @@ function api_export_setlist(): void
     $pdf->output((trim((string)($b['title'] ?? '')) ?: '새 콘티') . '.pdf');
 }
 
+/**
+ * 새 콘티(담은 곡들)를 라이브러리에 콘티로 저장 — 고른 곡의 악보 그림을 새 콘티로 복사한다.
+ * 곡 제목·키·가사는 원래 곡에서 그대로 가져오고(다시 읽지 않음), 바로 '확인 완료' 상태로 들어간다.
+ */
+function api_save_setlist(): array
+{
+    @set_time_limit(120);
+    $b = body_json();
+    $ids = array_map('intval', (array)($b['song_ids'] ?? []));
+    if (!$ids) throw new ApiError(400, '선택한 곡이 없습니다');
+    if (count($ids) > 60) throw new ApiError(400, '한 번에 60곡까지 저장할 수 있어요');
+    $title = mb_substr(trim((string)($b['title'] ?? '')) ?: '새 콘티', 0, 200);
+    $withAnnot = !empty($b['include_annotations']);
+
+    // 곡마다 [원래 곡, 그림을 가져올 콘티, 시작쪽, 끝쪽]
+    $plan = [];
+    $total = 0;
+    foreach ($ids as $sid) {
+        $r = q_one('SELECT * FROM songs WHERE id = ?', [$sid]);
+        if (!$r) throw new ApiError(404, "곡을 찾을 수 없습니다 (id=$sid)");
+        [$sc, $a, $z] = [(int)$r['score_id'], (int)$r['page_start'], (int)$r['page_end']];
+        if ($r['use_song_id'] && ($k = q_one('SELECT * FROM songs WHERE id = ?', [$r['use_song_id']]))) {
+            [$sc, $a, $z] = [(int)$k['score_id'], (int)$k['page_start'], (int)$k['page_end']];
+        }
+        $pages = q_all('SELECT * FROM pages WHERE score_id = ? AND page_number BETWEEN ? AND ? ORDER BY page_number', [$sc, $a, $z]);
+        $pages = array_values(array_filter($pages, fn($p) => is_file(page_file($sc, (int)$p['page_number']))));
+        if (!$pages) continue;
+        $plan[] = [$r, $sc, $pages];
+        $total += count($pages);
+    }
+    if (!$total) throw new ApiError(404, '악보 그림이 없어요');
+
+    $pdo = db();
+    $pdo->beginTransaction();
+    $newId = 0;
+    try {
+        q("INSERT INTO scores (title, original_filename, page_count, conti_date, confirmed, status, status_detail, from_setlist)
+           VALUES (?, ?, ?, ?, 1, 'ready', '', 1)", [$title, $title . '.pdf', $total, guess_date($title)]);
+        $newId = (int)$pdo->lastInsertId();
+        $dir = score_dir($newId);
+        $n = 0;
+        $chords = [];
+        $lyrics = [];
+        $annotCache = [];
+        foreach ($plan as [$r, $sc, $pages]) {
+            $start = $n + 1;
+            foreach ($pages as $p) {
+                $n++;
+                $src = page_file($sc, (int)$p['page_number']);
+                $dst = page_file($newId, $n);
+                if (!@link($src, $dst) && !@copy($src, $dst)) throw new ApiError(500, '악보 그림을 복사하지 못했어요 (저장 공간 확인)');
+                q('INSERT INTO pages (score_id, page_number, width, height, h, analyzed, title_guess, has_title, key_explicit, chords_json, lyrics_text)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                  [$newId, $n, $p['width'], $p['height'], $p['h'], 1, $p['title_guess'], $p['has_title'], $p['key_explicit'],
+                   $p['chords_json'] ?: '[]', $p['lyrics_text']]);
+                foreach (json_decode((string)($p['chords_json'] ?: '[]'), true) ?: [] as $c) $chords[$c] = true;
+                $lyrics[] = (string)$p['lyrics_text'];
+                if ($withAnnot) {
+                    $annotCache[$sc] ??= annotations_of($sc);
+                    $strokes = $annotCache[$sc][(int)$p['page_number']] ?? [];
+                    if ($strokes) q('INSERT INTO annotations (score_id, page_number, strokes_json) VALUES (?, ?, ?)', [$newId, $n, json_encode($strokes)]);
+                }
+            }
+            q('INSERT INTO songs (score_id, page_start, page_end, title, song_key, key_source, title_manual, lyrics_text, chords_text,
+                                  section, tempo, matched_from, use_song_id) VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?)',
+              [$newId, $start, $n, $r['title'], $r['song_key'], $r['key_source'] ?: 'manual', $r['lyrics_text'], $r['chords_text'],
+               $r['section'], $r['tempo'], $r['id'], $r['use_song_id'] ?: null]);
+        }
+        // 표지 그림: 첫 곡이 원래 콘티의 1쪽이면 그 표지를, 아니면 1쪽 그림을 그대로 쓴다(api_thumbnail)
+        $first = $plan[0];
+        if ((int)$first[2][0]['page_number'] === 1 && is_file(thumb_file($first[1]))) @copy(thumb_file($first[1]), thumb_file($newId));
+        $cs = array_keys($chords);
+        sort($cs);
+        q('UPDATE scores SET chords_text = ?, lyrics_text = ? WHERE id = ?', [implode(' ', $cs), implode("\n", $lyrics), $newId]);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        if ($newId) rrmdir(DATA_DIR . "/scores/$newId");
+        throw $e;
+    }
+    return summary_by_id($newId);
+}
+
 // ── 필기 ─────────────────────────────────────────────────────
 function api_get_annotations(int $id, int $n): array
 {

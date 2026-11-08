@@ -69,7 +69,7 @@ function q_val(string $sql, array $params = []) { $r = q($sql, $params)->fetchCo
 
 function marks_sql(array $ids): string { return implode(',', array_fill(0, count($ids), '?')); }
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function ensure_schema(PDO $pdo): void
 {
@@ -161,6 +161,12 @@ function ensure_schema(PDO $pdo): void
         PRIMARY KEY (vid, day),
         KEY idx_visits_last (last_ts)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    // v3: '새 콘티'를 라이브러리에 저장한 콘티 표시 (겹치는 콘티 검사에서 뺀다)
+    try {
+        $pdo->exec("ALTER TABLE scores ADD COLUMN IF NOT EXISTS from_setlist TINYINT NOT NULL DEFAULT 0");
+    } catch (Throwable $e) {
+        if (!str_contains($e->getMessage(), 'Duplicate column')) throw $e;
+    }
     @mkdir(DATA_DIR . '/scores', 0755, true);
     @file_put_contents($flag, date('c'));
 }
