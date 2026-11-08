@@ -514,6 +514,7 @@ async function loadAllVersions() {
 }
 
 function renderSongModal() {
+  document.querySelector('.lib-modal-box')?.classList.remove('wide');
   const m = LibState.modal;
   const versions = m.versions || [];
   if (!versions.length) { closeModal(true); return; }
@@ -893,6 +894,8 @@ function renderContiModal(conti, songs) {
            <span class="ai-row-sub">제목·키가 많이 틀렸을 때. 페이지마다 Claude가 읽어요 (API 사용료 발생)</span>`
         : `<span class="ai-row-sub">🤖 인식이 잘 안 되면 서버에 Claude API 키를 넣고 "AI로 다시 인식"을 쓸 수 있어요</span>`}
     </div>`}
+    ${contiViewBar()}
+    <div class="conti-songs-wrap" id="contiSongsWrap">
     ${blocks.map(b => {
       if (b.orphan) {
         return `
@@ -942,12 +945,14 @@ function renderContiModal(conti, songs) {
           </div>
         </div>`;
     }).join('')}
+    </div>
     ${pending ? `<div class="review-footer">${confirmBtn}</div>` : ''}
     <div class="save-all-bar hidden" id="saveAllBar">
       <span id="saveAllCount"></span>
       <button type="button" class="btn-link" data-action="undo-all">되돌리기</button>
       <button type="button" class="btn-primary" data-action="save-all">💾 전체 저장</button>
     </div>`;
+  applyContiView(conti.id);
   updateSaveAllBar();
 }
 
@@ -1096,6 +1101,8 @@ function renderContiModalReadOnly(conti, songs) {
     <p class="lib-modal-sub">${conti.conti_date ? `📅 ${escapeHtml(conti.conti_date)} · ` : ''}${songs.length}곡</p>
     ${markPicker(contiMarkKey(conti.id))}
     <div class="now-row"><button type="button" class="btn-now" data-live="send-conti">📡 NOW · 지금 이 콘티 띄우기</button></div>
+    ${contiViewBar()}
+    <div class="conti-songs-wrap" id="contiSongsWrap">
     ${songs.map((s, i) => `
       ${s.section && s.section !== songs[i - 1]?.section ? `<h3 class="conti-section-head sec-${s.section}">${s.section === 'before' ? '🙏 설교 전 찬양' : '🕊 설교 후 찬양'}</h3>` : ''}
       <div class="conti-song">
@@ -1107,7 +1114,59 @@ function renderContiModalReadOnly(conti, songs) {
           ${addButton(s)}
         </div>
         <div class="song-pages small">${s.image_urls.map(u => `<div class="song-page">${img(u, s.title)}</div>`).join('')}</div>
-      </div>`).join('')}`;
+      </div>`).join('')}
+    </div>`;
+  applyContiView(conti.id);
+}
+
+/* ============================================================
+   콘티 안 곡 보기 방식 — 한 줄씩 / 2칸 / 4칸 / 한 곡씩 (기기마다 기억)
+   ============================================================ */
+const CONTI_VIEWS = [['rows', '☰ 한 줄씩'], ['cols-2', '▦ 2칸'], ['cols-4', '▦ 4칸'], ['one', '1️⃣ 한 곡씩']];
+function getContiView() {
+  let v = null;
+  try { v = localStorage.getItem('jandi.view.conti'); } catch { /* 저장 불가 */ }
+  return CONTI_VIEWS.some(x => x[0] === v) ? v : 'rows';
+}
+function contiViewBar() {
+  return `<div class="conti-view-bar" id="contiViewBar">
+    <div class="lib-view-toggle" role="group" aria-label="곡 보기 방식">
+      ${CONTI_VIEWS.map(([v, label]) => `<button type="button" data-action="conti-view" data-view="${v}">${label}</button>`).join('')}
+    </div>
+    <div class="conti-one-nav">
+      <button type="button" class="btn-sm" data-action="conti-one" data-step="-1">◀ 이전</button>
+      <span class="conti-one-pos" id="contiOnePos"></span>
+      <button type="button" class="btn-sm" data-action="conti-one" data-step="1">다음 ▶</button>
+    </div>
+  </div>`;
+}
+function applyContiView(contiId, view = getContiView()) {
+  const wrap = document.getElementById('contiSongsWrap');
+  if (!wrap) return;
+  if (contiId !== undefined && LibState.contiOne?.id !== contiId) LibState.contiOne = { id: contiId, idx: 0 };
+  CONTI_VIEWS.forEach(([v]) => wrap.classList.toggle('view-' + v, v === view));
+  document.querySelector('.lib-modal-box')?.classList.toggle('wide', view === 'cols-2' || view === 'cols-4');
+  const bar = document.getElementById('contiViewBar');
+  bar.classList.toggle('one', view === 'one');
+  bar.querySelectorAll('[data-action="conti-view"]').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === view);
+    b.setAttribute('aria-pressed', b.dataset.view === view);
+  });
+  showContiOne(0);
+}
+function showContiOne(step) {
+  const wrap = document.getElementById('contiSongsWrap');
+  if (!wrap || !LibState.contiOne) return;
+  const items = [...wrap.querySelectorAll(':scope > .conti-song')];
+  if (!items.length) return;
+  const st = LibState.contiOne;
+  st.idx = Math.max(0, Math.min(items.length - 1, st.idx + step));
+  items.forEach((el, i) => el.classList.toggle('is-current', i === st.idx));
+  document.getElementById('contiOnePos').textContent = `${st.idx + 1} / ${items.length}`;
+  const bar = document.getElementById('contiViewBar');
+  bar.querySelector('[data-step="-1"]').disabled = st.idx === 0;
+  bar.querySelector('[data-step="1"]').disabled = st.idx === items.length - 1;
+  if (step && wrap.classList.contains('view-one')) bar.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
 async function contiAction(makeRequest, okMsg) {
@@ -1127,6 +1186,7 @@ async function contiAction(makeRequest, okMsg) {
    모달 열고 닫기
    ============================================================ */
 function showModal() {
+  document.querySelector('.lib-modal-box')?.classList.remove('wide');
   document.getElementById('libModal').classList.remove('hidden');
   document.body.classList.add('modal-open');
 }
@@ -1143,6 +1203,7 @@ function closeModal(force = false) {
   }
   clearTimeout(LibState.modalPoll);
   document.getElementById('libModal').classList.add('hidden');
+  document.querySelector('.lib-modal-box')?.classList.remove('wide');
   document.body.classList.remove('modal-open');
   LibState.modal = null;
   if (LibState.modalDirty) {
@@ -1153,6 +1214,11 @@ function closeModal(force = false) {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && LibState.modal) closeModal();
+  if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && LibState.modal?.type === 'conti'
+      && document.getElementById('contiSongsWrap')?.classList.contains('view-one')
+      && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) {
+    showContiOne(e.key === 'ArrowLeft' ? -1 : 1);
+  }
 });
 
 /* ============================================================
@@ -1236,6 +1302,11 @@ function initDelegatedActions() {
         break;
       case 'save-all': saveAllConti(); break;
       case 'undo-all': undoAllConti(); break;
+      case 'conti-view':
+        try { localStorage.setItem('jandi.view.conti', el.dataset.view); } catch { /* 저장 불가 */ }
+        applyContiView(undefined, el.dataset.view);
+        break;
+      case 'conti-one': showContiOne(Number(el.dataset.step)); break;
       case 'review-next': {
         const next = LibState.contis.find(x => !x.confirmed);
         if (next) openContiModal(next.id);

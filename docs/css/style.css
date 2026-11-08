@@ -2182,3 +2182,65 @@ form.dirty .lib-edit-title-input { border-color: #f59e0b; background: rgba(245,1
   .lib-song-grid.view-list .song-add-btn { padding: 6px 8px; font-size: 12px; }
   .lib-conti-list.view-tiles { grid-template-columns: repeat(2, 1fr); gap: 10px; }
 }
+
+/* ============================================================
+   콘티 안 곡 보기 방식 (한 줄씩 / 2칸 / 4칸 / 한 곡씩)
+   ============================================================ */
+.lib-modal-box.wide { max-width: 1500px; }
+.conti-view-bar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 8px -6px 4px; padding: 8px 6px;
+  background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+}
+.conti-view-bar .lib-view-toggle { margin-left: 0; }
+.conti-one-nav { display: none; align-items: center; gap: 8px; margin-left: auto; }
+.conti-view-bar.one .conti-one-nav { display: flex; }
+.conti-one-pos { font: 700 14px var(--font-mono); min-width: 56px; text-align: center; }
+.conti-one-nav .btn-sm:disabled { opacity: .35; cursor: default; }
+
+/* 2칸 · 4칸 — 곡마다 카드 */
+.conti-songs-wrap.view-cols-2, .conti-songs-wrap.view-cols-4 {
+  display: grid; gap: 12px; padding-top: 10px; align-items: start;
+}
+.conti-songs-wrap.view-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.conti-songs-wrap.view-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.conti-songs-wrap:is(.view-cols-2, .view-cols-4) > .conti-section-head { grid-column: 1 / -1; margin: 4px 0 0; }
+.conti-songs-wrap:is(.view-cols-2, .view-cols-4) > .conti-song {
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 10px; background: var(--bg-card); min-width: 0;
+}
+.conti-songs-wrap:is(.view-cols-2, .view-cols-4) .song-pages.small { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.conti-songs-wrap.view-cols-4 .conti-song-head { gap: 4px; }
+.conti-songs-wrap.view-cols-4 .conti-song-head .lib-edit-title-input:not(.song-key-input) { flex: 1 1 100%; min-width: 0; order: 1; }
+.conti-songs-wrap.view-cols-4 .conti-song-head .conti-song-no { order: 0; }
+.conti-songs-wrap.view-cols-4 .conti-song-head > *:not(.conti-song-no):not(.lib-edit-title-input) { order: 2; }
+.conti-songs-wrap.view-cols-4 .conti-song-head .song-key-input { order: 2; flex: 0 0 64px !important; min-width: 0 !important; }
+.conti-songs-wrap.view-cols-4 .conti-song-head .btn-sm,
+.conti-songs-wrap.view-cols-4 .conti-song-head .song-add-btn { font-size: 11px; padding: 4px 7px; }
+.conti-songs-wrap.view-cols-4 .song-cats { font-size: 11px; }
+.conti-songs-wrap.view-cols-4 .song-pages.small { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; }
+.conti-songs-wrap.view-cols-4 .page-tools .btn-sm { font-size: 10px; padding: 2px 5px; }
+.conti-songs-wrap.view-cols-4 .song-page figcaption { flex-wrap: wrap; }
+.conti-songs-wrap.view-cols-4 .conti-hint { font-size: 11px; }
+
+/* 한 곡씩 — 지금 곡만 크게 */
+.conti-songs-wrap.view-one > .conti-section-head { display: none; }
+.conti-songs-wrap.view-one > .conti-song { display: none; border-top: none; }
+.conti-songs-wrap.view-one > .conti-song.is-current { display: block; }
+.conti-songs-wrap.view-one .song-pages.small { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+
+@media (max-width: 1100px) {
+  .conti-songs-wrap.view-cols-4 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 820px) {
+  .conti-songs-wrap.view-cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .conti-view-bar .lib-view-toggle { width: 100%; }
+  .conti-view-bar .lib-view-toggle button { padding: 7px 2px; font-size: 11px; }
+  .conti-one-nav { width: 100%; justify-content: space-between; }
+  .conti-songs-wrap.view-cols-2 { grid-template-columns: minmax(0, 1fr); }
+  .conti-songs-wrap.view-cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .conti-songs-wrap.view-one .song-pages.small { grid-template-columns: minmax(0, 1fr); }
+}
