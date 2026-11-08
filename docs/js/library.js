@@ -865,12 +865,12 @@ function renderContiModal(conti, songs) {
       <button class="btn-link" data-action="reprocess" data-id="${conti.id}">처음부터 다시 분석${LibState.engine === 'gemini' ? ' (✨ 제미나이)' : ''}</button>
     </p>
     ${conti.status === 'error' ? `<p class="conti-hint error-hint">⚠️ ${escapeHtml(conti.status_detail)}</p>` : ''}
-    <div class="ai-row">
+    ${isPhpServer() ? '' : `<div class="ai-row">
       ${LibState.aiAvailable
         ? `<button type="button" class="btn-sm ai-btn" data-action="reprocess-ai" data-id="${conti.id}">🤖 AI(Claude)로 다시 인식</button>
            <span class="ai-row-sub">제목·키가 많이 틀렸을 때. 페이지마다 Claude가 읽어요 (API 사용료 발생)</span>`
         : `<span class="ai-row-sub">🤖 인식이 잘 안 되면 서버에 Claude API 키를 넣고 "AI로 다시 인식"을 쓸 수 있어요</span>`}
-    </div>
+    </div>`}
     ${blocks.map(b => {
       if (b.orphan) {
         return `
@@ -1232,7 +1232,8 @@ function initDelegatedActions() {
       case 'reprocess':
         if (!confirm('이 콘티를 처음부터 다시 분석할까요? 직접 고친 제목·키·곡 나누기는 사라져요.')) return;
         el.disabled = true;
-        contiAction(() => apiJson(`/api/scores/${id}/reprocess`, { method: 'POST' }), '다시 분석을 시작했어요');
+        contiAction(() => isPhpServer() ? clientReprocess(id) : apiJson(`/api/scores/${id}/reprocess`, { method: 'POST' }),
+          isPhpServer() ? '다시 읽기를 시작했어요 — 끝날 때까지 이 창을 닫지 마세요' : '다시 분석을 시작했어요');
         break;
       case 'reprocess-ai':
         if (!confirm('Claude AI로 이 콘티를 다시 읽을까요?\n· 직접 고친 제목·키·곡 나누기는 사라져요\n· 페이지마다 Claude API 사용료가 들어요')) return;
@@ -1409,7 +1410,7 @@ function renderUploadList() {
   const cur = items.find(it => it.status === 'work');
   document.getElementById('uploadProgressTitle').textContent = items.length > 1
     ? `콘티 ${items.length}개 중 ${done}개 완료${cur ? ` — "${cur.file.name}" 처리하는 중...` : ''}`
-    : `"${items[0]?.file.name || ''}" 처리하는 중...`;
+    : `"${items[0]?.file.name || ''}" 처리하는 중... ${items[0]?.note || ''}`;
   document.getElementById('uploadFileList').innerHTML = items.length > 1
     ? items.map(it => {
         const [icon, label] = UPLOAD_STATUS[it.status];
@@ -1431,16 +1432,24 @@ async function runUploadQueue() {
     it.status = 'work';
     renderUploadList();
     try {
-      const fd = new FormData();
-      fd.append('file', it.file);
-      let conti = await apiJson('/api/scores', { method: 'POST', body: fd });
+      let conti;
+      if (isPhpServer()) {
+        // 카페24: 브라우저가 페이지를 그림으로 바꿔 올리고, 서버가 한 장씩 읽는다
+        conti = await clientUploadPdf(it.file, detail => { it.note = detail; renderUploadList(); });
+      } else {
+        const fd = new FormData();
+        fd.append('file', it.file);
+        conti = await apiJson('/api/scores', { method: 'POST', body: fd });
+      }
       if (conti.duplicate) {
         it.conti = conti;
         it.status = 'dup';
       } else {
-        it.note = '올리기 완료 — 분석 시작';
-        renderUploadList();
-        conti = await waitForAnalysis(conti, detail => { it.note = detail; renderUploadList(); });
+        if (conti.status === 'processing') {
+          it.note = '올리기 완료 — 분석 시작';
+          renderUploadList();
+          conti = await waitForAnalysis(conti, detail => { it.note = detail; renderUploadList(); });
+        }
         it.conti = conti;
         if (conti.status === 'error') throw new Error(conti.status_detail || '분석 실패');
         it.status = 'ok';

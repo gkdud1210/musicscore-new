@@ -11,6 +11,7 @@ const API_BASE = window.location.origin;
 async function checkServerStatus() {
   const dot  = document.querySelector('.status-dot');
   const text = document.querySelector('.status-text');
+  if (!dot || !text) return;
   try {
     const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
     if (res.ok) {
@@ -269,7 +270,7 @@ function showToast(message, type = 'info', duration = 3500) {
 /* ============================================================
    로그인 상태 / 권한 (공용 비밀번호)
    ============================================================ */
-const AuthState = { auth: false, role: 'admin', canEdit: true, hasAdmin: false, ready: null };
+const AuthState = { auth: false, role: 'admin', canEdit: true, hasAdmin: false, server: 'python', ready: null };
 
 // 로그인이 풀린 상태에서 API를 부르면 로그인 화면으로 보낸다
 (function wrapFetchForAuth() {
@@ -295,6 +296,7 @@ AuthState.ready = (async () => {
       AuthState.role = me.role;
       AuthState.canEdit = !!me.can_edit;
       AuthState.hasAdmin = !!me.has_admin;
+      AuthState.server = me.server || 'python';
     }
   } catch { /* 오프라인이면 기본값(로컬 사용) */ }
   return AuthState;
@@ -303,6 +305,10 @@ AuthState.ready = (async () => {
 window.addEventListener('DOMContentLoaded', async () => {
   await AuthState.ready;
   document.body.classList.toggle('read-only', !AuthState.canEdit);
+  // 카페24(PHP) 서버에는 조 변환(파이썬 전용)이 없다
+  if (AuthState.server === 'php') {
+    document.querySelectorAll('a[href="transpose.html"], #analyzePageBtn').forEach(el => { el.style.display = 'none'; });
+  }
   renderHeaderAccount();
   initInstallButton();
 });

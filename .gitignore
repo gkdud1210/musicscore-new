@@ -20,3 +20,11 @@ venv/
 
 # VS Code
 .vscode/launch.json
+
+# 카페24 빌드 결과·설정
+cafe24/build/
+cafe24/www/config.php
+cafe24/www/data/*
+!cafe24/www/data/.htaccess
+cafe24/.ftp
+cafe24/.deploy-*

@@ -1,0 +1,39 @@
+# J&I worship (카페24)
+Options -Indexes
+DirectoryIndex index.html
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # http → https
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+  RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1)
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+  RewriteRule ^api/ api.php [L,QSA]
+  RewriteRule ^health$ api.php [L,QSA]
+  # 설정·코드·저장 파일은 밖에서 못 열게
+  RewriteRule ^(lib|data)(/|$) - [F,L]
+  RewriteRule ^(config|config\.sample)\.php$ - [F,L]
+  RewriteRule ^(tools|migrate)(/|$) - [F,L]
+</IfModule>
+
+<FilesMatch "(\.(md|sh|py|sql|log)|^\.user\.ini)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# PHP 설정(업로드 크기·시간)은 .user.ini 에 (카페24 방식)
+
+# 화면 파일은 늘 새것으로 (업데이트가 바로 보이게)
+<IfModule mod_headers.c>
+  <FilesMatch "\.(html|htm)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+  </FilesMatch>
+</IfModule>
+
+AddType application/manifest+json .webmanifest
