@@ -1964,3 +1964,14 @@ form.dirty .lib-edit-title-input { border-color: #f59e0b; background: rgba(245,1
   .hero-subtitle, .hero-chips, .hero-tag { display: none; }
   .hero-title { font-size: 26px; }
 }
+
+/* 제목·키가 같은 악보 여러 장 → 하나만 남기기 */
+.dup-sheet-banner { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; background: rgba(255,196,0,.10); border: 1px solid rgba(255,196,0,.35); }
+.dup-sheet-banner p { margin: 0 0 8px; font-size: 14px; }
+.dup-sheet-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.dup-sheets { margin: 4px 0 18px; padding: 10px 12px; border-radius: 12px; border: 1px dashed rgba(255,255,255,.25); }
+.dup-sheets > summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.dup-sheets-sub { font-size: 13px; opacity: .75; margin: 8px 0; }
+.keep-sheet-btn { white-space: nowrap; }
+.kept-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.song-cats-label { font-size: 12px; opacity: .7; margin-right: 2px; }

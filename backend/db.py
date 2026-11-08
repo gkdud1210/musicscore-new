@@ -113,6 +113,9 @@ def init_db():
         _add_column_if_missing(conn, "songs", "section", "section TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "songs", "tempo", "tempo TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "songs", "matched_from", "matched_from INTEGER")
+        # 제목·키가 같은 악보가 여러 장이면 하나만 남긴다: 나머지 곡은 남긴 곡(use_song_id)의 악보로 보여준다
+        _add_column_if_missing(conn, "songs", "use_song_id",
+                               "use_song_id INTEGER REFERENCES songs(id) ON DELETE SET NULL")
         from dedupe import init_dedupe_db
         init_dedupe_db(conn)
 

@@ -352,7 +352,8 @@ function renderSongs() {
   const groups = LibState.selectedMark
     ? LibState.groups.filter(g => marksOf(g.key).includes(LibState.selectedMark))
     : LibState.groups;
-  const total = groups.reduce((n, g) => n + g.versions.length, 0);
+  const total = groups.reduce((n, g) => n + new Set(g.versions.map(v => v.sheet_id)).size, 0);
+  renderDupSheetBanner(groups);
   document.getElementById('songsCount').textContent =
     groups.length ? `${LibState.selectedMark ? LibState.selectedMark + ' ' : ''}${groups.length}곡 (악보 ${total}장)` : '';
 
@@ -367,6 +368,32 @@ function renderSongs() {
   }
   empty.classList.add('hidden');
   grid.innerHTML = groups.map(renderSongCard).join('');
+}
+
+/** 같은 제목·키인데 악보가 여러 장인 곡 → 하나만 남기도록 안내 */
+function dupSheetBuckets(versions) {
+  const byKey = new Map();
+  for (const v of versions) {
+    // 키를 모르거나 제목을 못 읽은 곡은 같은 곡인지 모르니 따로 둔다
+    const k = normTitle(v.title) === normTitle('제목 없음') ? '' : (v.key || '').trim();
+    if (!byKey.has(k)) byKey.set(k, new Map());
+    const sheets = byKey.get(k);
+    if (!sheets.has(v.sheet_id)) sheets.set(v.sheet_id, []);
+    sheets.get(v.sheet_id).push(v);
+  }
+  return byKey;   // 키 → (악보 번호 → 그 악보를 쓰는 곡들)
+}
+
+function renderDupSheetBanner(groups) {
+  const box = document.getElementById('dupSheetBanner');
+  if (!box) return;
+  const dups = AuthState.canEdit ? groups.filter(g =>
+    [...dupSheetBuckets(g.versions).entries()].some(([k, sheets]) => k && sheets.size > 1)) : [];
+  box.innerHTML = dups.length ? `
+    <div class="dup-sheet-banner">
+      <p>🗂 제목·키가 같은데 악보가 여러 장인 곡이 <b>${dups.length}곡</b> 있어요. 눌러서 남길 악보 하나를 골라주세요.</p>
+      <div class="dup-sheet-chips">${dups.map(g => `<button type="button" class="btn-sm" data-action="open-song" data-group="${escapeHtml(g.key)}">${escapeHtml(g.main.title)}</button>`).join('')}</div>
+    </div>` : '';
 }
 
 function inSetlist(songId) {
@@ -488,14 +515,60 @@ async function setGroupTempo(tempo) {
   }
 }
 
-/** 같은 그림의 악보는 한 번만 보여주고, 어느 콘티들에 쓰였는지 적는다 */
+/** 같은 그림의 악보는 한 번만 보여주고, 어느 콘티들에 쓰였는지 적는다.
+ *  제목·키가 같은 악보가 여러 장이면 하나만 보여주고, 나머지는 접어두고 "이 악보만 남기기"로 고르게 한다. */
 function renderSheets(versions) {
-  const bySheet = new Map();
-  versions.forEach(v => { if (!bySheet.has(v.sheet_id)) bySheet.set(v.sheet_id, []); bySheet.get(v.sheet_id).push(v); });
-  const sheets = [...bySheet.values()];
-  return `<h3 class="song-section-title">🎼 악보 <span>${sheets.length}</span>
-      ${versions.length > sheets.length ? `<small class="sheet-dup-note">같은 악보는 하나로 모았어요 (콘티 ${versions.length}곳)</small>` : ''}</h3>
-    ${sheets.map(list => renderSongVersion(list[0], list)).join('')}`;
+  const buckets = dupSheetBuckets(versions);
+  const keys = [...buckets.keys()].sort((a, b) => keySortIndex(a) - keySortIndex(b));
+  let shown = 0;
+  const html = keys.map(k => {
+    // 많이 쓰인 악보(남긴 악보)를 맨 앞에
+    const sheets = [...buckets.get(k).values()].sort((a, b) =>
+      b.length - a.length || String(b[0].conti_date || '').localeCompare(String(a[0].conti_date || '')));
+    shown++;
+    if (sheets.length === 1 || !k) {
+      shown += sheets.length - 1;
+      return sheets.map(list => renderSongVersion(list[0], list)).join('');
+    }
+    const ids = sheets.flat().map(v => v.id).join(',');
+    const keepBtn = list => AuthState.canEdit
+      ? `<button type="button" class="btn-primary btn-compact keep-sheet-btn" data-action="keep-sheet" data-id="${list[0].id}" data-ids="${ids}" data-key="${escapeHtml(k)}">⭐ 이 악보만 남기기</button>` : '';
+    return `
+      ${renderSongVersion(sheets[0][0], sheets[0], keepBtn(sheets[0]))}
+      <details class="dup-sheets">
+        <summary>🗂 ${escapeHtml(k)}키 악보가 ${sheets.length - 1}장 더 있어요 — 열어서 남길 악보를 고르세요</summary>
+        <p class="dup-sheets-sub">"이 악보만 남기기"를 누르면 나머지 악보는 목록에서 사라지고, 그 악보가 들어있던 콘티에서도 남긴 악보로 보여요 (콘티 순서는 그대로).</p>
+        ${sheets.slice(1).map(list => renderSongVersion(list[0], list, keepBtn(list))).join('')}
+      </details>`;
+  }).join('');
+  return `<h3 class="song-section-title">🎼 악보 <span>${shown}</span>
+      ${versions.length > shown ? `<small class="sheet-dup-note">같은 악보는 하나로 모았어요 (콘티 ${versions.length}곳)</small>` : ''}</h3>
+    ${html}`;
+}
+
+async function keepSheet(id, ids, key) {
+  const others = ids.filter(x => x !== id);
+  if (!confirm(`이 악보만 남길까요?\n\n${key}키의 다른 악보는 곡 목록에서 사라지고, 그 악보가 들어있던 콘티에서도 이 악보로 보여요.\n(원본 PDF는 지우지 않아서 콘티 화면에서 "원래 악보로" 되돌릴 수 있어요)`)) return;
+  try {
+    await apiJson(`/api/songs/${id}/keep`, jsonBody('POST', { song_ids: others }));
+    showToast('이 악보만 남겼어요.', 'success');
+    LibState.modalDirty = true;
+    await refreshAll();
+    await loadAllVersions();
+  } catch (e) {
+    showToast('실패: ' + e.message, 'error');
+  }
+}
+
+async function restoreSheet(id) {
+  try {
+    await apiJson(`/api/songs/${id}/restore`, { method: 'POST' });
+    showToast('원래 악보로 되돌렸어요.', 'success');
+    LibState.modalDirty = true;
+    if (LibState.modal?.type === 'conti') await reloadContiModal();
+  } catch (e) {
+    showToast('실패: ' + e.message, 'error');
+  }
 }
 
 /** 이 곡이 들어간 콘티 목록 — 콘티마다 전체 곡 순서를 보여주고, 이 곡은 강조 */
@@ -536,7 +609,7 @@ function renderSongContis(versions) {
     </section>`;
 }
 
-function renderSongVersion(s, same = [s]) {
+function renderSongVersion(s, same = [s], extraBtn = '') {
   const range = s.page_start === s.page_end ? `p.${s.page_start}` : `p.${s.page_start}–${s.page_end}`;
   const usedIn = same.length > 1
     ? `<p class="sheet-used-in">🔁 이 악보가 쓰인 콘티 ${same.length}곳: ${same.map(v => escapeHtml(v.conti_date || v.conti_title)).join(', ')}</p>` : '';
@@ -550,6 +623,7 @@ function renderSongVersion(s, same = [s]) {
             ${s.key_source ? ` · 키: ${escapeHtml(keySourceLabel(s.key_source))}` : ''}</span>
         </div>
         <div class="song-version-actions">
+          ${extraBtn}
           ${addButton(s)}
           <button class="btn-sm admin-only" data-action="edit-song" data-id="${s.id}">✏️ 수정</button>
           <a class="btn-sm" href="viewer.html?id=${s.score_id}&page=${s.page_start}">✍️ 필기</a>
@@ -749,6 +823,7 @@ function renderContiModal(conti, songs) {
             <button type="button" class="btn-sm" data-action="delete-song" data-id="${s.id}">곡에서 빼기</button>
             ${addButton(s)}
             <div class="song-cats">
+              <span class="song-cats-label">분류</span>
               ${choiceChip('section', 'before', '설교 전', s.section)}${choiceChip('section', 'after', '설교 후', s.section)}
               <span class="song-cats-sep"></span>
               ${choiceChip('tempo', 'slow', '🐢 느린', s.tempo)}${choiceChip('tempo', 'fast', '🐇 빠른', s.tempo)}
@@ -756,10 +831,13 @@ function renderContiModal(conti, songs) {
               ${s.matched ? '<span class="matched-badge" title="전에 확인한 콘티에 같은 악보가 있어서 제목·키를 가져왔어요">🔁 전에 확인한 악보</span>' : ''}
             </div>
           </form>
+          ${s.use_song_id ? `<p class="conti-hint kept-hint">⭐ 같은 제목·키의 남긴 악보로 보여주고 있어요.
+            <button type="button" class="btn-link" data-action="restore-sheet" data-id="${s.id}">↩ 이 콘티의 원래 악보로</button></p>` : ''}
           ${suspicious ? '<p class="conti-hint">코드와 키를 찾지 못했어요. 표지·순서지라면 "곡에서 빼기"를 눌러주세요.</p>' : ''}
           <div class="song-pages small">
             ${s.image_urls.map((u, i) => {
               const page = s.page_start + i;
+              if (s.use_song_id) return `<figure class="song-page">${img(u, s.title)}</figure>`;
               return `<figure class="song-page">${img(u, s.title)}
                 <figcaption><span>p.${page}</span>
                   <span class="page-tools">
@@ -1012,6 +1090,10 @@ function initDelegatedActions() {
         break;
       }
       case 'set-group-tempo': setGroupTempo(el.dataset.tempo); break;
+      case 'keep-sheet': keepSheet(id, el.dataset.ids.split(',').map(Number), el.dataset.key); break;
+      case 'restore-sheet':
+        if (await saveAllConti({ reload: false, quiet: true })) restoreSheet(id);
+        break;
       case 'from-here-after': sectionFromHere(Number(el.dataset.index)); break;
       case 'key-all': LibState.selectedKeys.clear(); renderKeyChips(); fetchSongs(); break;
       case 'mark-filter':

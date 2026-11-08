@@ -59,6 +59,7 @@ class SongBrief(BaseModel):
     section: str = ""
     tempo: str = ""
     matched: bool = False
+    use_song_id: Optional[int] = None   # 이 곡 대신 보여줄 (남긴) 악보의 곡 id
 
 
 class ScoreSummary(BaseModel):
@@ -106,6 +107,7 @@ class Song(BaseModel):
     section: str = ""          # before(설교 전) | after(설교 후) | ''
     tempo: str = ""            # slow | fast | ''
     matched: bool = False      # 전에 확인한 악보에서 제목·키를 가져왔음
+    use_song_id: Optional[int] = None  # 하나만 남긴 악보로 대신 보여줌 (image_urls 도 그 악보)
 
 
 SECTIONS = ("", "before", "after")
@@ -117,6 +119,10 @@ class SongUpdateRequest(BaseModel):
     key: Optional[str] = None
     section: Optional[str] = None
     tempo: Optional[str] = None
+
+
+class KeepSheetRequest(BaseModel):
+    song_ids: List[int]        # 이 악보로 바꿔 보여줄 곡들 (같은 제목·키의 다른 악보)
 
 
 class SongCreateRequest(BaseModel):
@@ -228,7 +234,8 @@ def _song_rows_for_score(conn, score_id: int):
 def _song_brief(r) -> SongBrief:
     return SongBrief(id=r["id"], title=r["title"], key=r["song_key"], key_source=r["key_source"],
                      page_start=r["page_start"], page_end=r["page_end"],
-                     section=r["section"], tempo=r["tempo"], matched=r["matched_from"] is not None)
+                     section=r["section"], tempo=r["tempo"], matched=r["matched_from"] is not None,
+                     use_song_id=r["use_song_id"])
 
 
 def _overlaps(conn, score_id: int) -> list:
@@ -337,8 +344,9 @@ def _analyze_and_store(conn, score_id: int, doc: "fitz.Document", pages=None, fo
         if src is not None:
             conn.execute(
                 "UPDATE songs SET title = ?, title_manual = 1, song_key = ?, key_source = ?, tempo = ?,"
-                " matched_from = ? WHERE id = ?",
-                (src["title"], src["song_key"], src["key_source"] or "manual", src["tempo"], src["id"], sid))
+                " matched_from = ?, use_song_id = ? WHERE id = ?",
+                (src["title"], src["song_key"], src["key_source"] or "manual", src["tempo"], src["id"],
+                 src["use_song_id"], sid))
 
     all_chords = sorted({c for p in pages for c in p["chords"]})
     conn.executemany("INSERT OR IGNORE INTO score_chords (score_id, chord) VALUES (?, ?)",
@@ -592,6 +600,11 @@ def ai_status():
 
 def _song_from_row(r, sheet_of: Optional[dict] = None) -> Song:
     lyrics = (r["lyrics_text"] or "").replace("\n", " ")
+    # 하나만 남긴 악보가 있으면 그 악보의 그림을 보여준다
+    alias = r["use_song_id"] if r["k_score_id"] is not None else None
+    img_score, img_start, img_end = ((r["k_score_id"], r["k_page_start"], r["k_page_end"]) if alias
+                                     else (r["score_id"], r["page_start"], r["page_end"]))
+    sheet_of = sheet_of or {}
     return Song(
         id=r["id"],
         title=r["title"],
@@ -603,19 +616,21 @@ def _song_from_row(r, sheet_of: Optional[dict] = None) -> Song:
         conti_date=r["conti_date"],
         page_start=r["page_start"],
         page_end=r["page_end"],
-        image_urls=[f"/api/scores/{r['score_id']}/pages/{n}/image"
-                    for n in range(r["page_start"], r["page_end"] + 1)],
+        image_urls=[f"/api/scores/{img_score}/pages/{n}/image" for n in range(img_start, img_end + 1)],
         lyrics_snippet=lyrics[:120],
-        sheet_id=(sheet_of or {}).get(r["id"], r["id"]),
+        sheet_id=sheet_of.get(alias, alias) if alias else sheet_of.get(r["id"], r["id"]),
         section=r["section"],
         tempo=r["tempo"],
         matched=r["matched_from"] is not None,
+        use_song_id=alias,
     )
 
 
 SONG_SELECT = """
-    SELECT so.*, sc.title AS conti_title, sc.conti_date AS conti_date
+    SELECT so.*, sc.title AS conti_title, sc.conti_date AS conti_date,
+           k.score_id AS k_score_id, k.page_start AS k_page_start, k.page_end AS k_page_end
     FROM songs so JOIN scores sc ON sc.id = so.score_id
+    LEFT JOIN songs k ON k.id = so.use_song_id
 """
 
 
@@ -698,6 +713,58 @@ def get_song(song_id: int):
         return _song_from_row(_get_song_row(conn, song_id), dedupe.index(conn)["sheet_of"])
 
 
+def _linked_song_ids(conn, song_id: int) -> List[int]:
+    """제목·키·빠르기를 같이 바꿀 곡들: 같은 그림의 악보 + 하나만 남긴 악보로 묶인 곡들."""
+    row = conn.execute("SELECT use_song_id FROM songs WHERE id = ?", (song_id,)).fetchone()
+    roots = set(dedupe.same_sheet_song_ids(conn, song_id))
+    if row and row["use_song_id"]:
+        roots.update(dedupe.same_sheet_song_ids(conn, row["use_song_id"]))
+    marks = ",".join("?" for _ in roots)
+    ids = set(roots)
+    ids.update(r["id"] for r in conn.execute(
+        f"SELECT id FROM songs WHERE use_song_id IN ({marks})", tuple(roots)))
+    return sorted(ids)
+
+
+@router.post("/songs/{keep_id}/keep", response_model=Song)
+def keep_sheet(keep_id: int, req: KeepSheetRequest):
+    """같은 제목·키 악보가 여러 장일 때 이 악보만 남긴다. 나머지 곡은 콘티 안 자리는 그대로 두고
+    이 악보로 보여주고 내보낸다 (원본 PDF는 안 지움 → '원래 악보로' 되돌릴 수 있음)."""
+    with get_conn() as conn:
+        keep = _get_song_row(conn, keep_id)
+        keep_sheet_ids = set(dedupe.same_sheet_song_ids(conn, keep_id))
+        targets = set()
+        for sid in req.song_ids:
+            if conn.execute("SELECT 1 FROM songs WHERE id = ?", (sid,)).fetchone():
+                targets.update(dedupe.same_sheet_song_ids(conn, sid))
+        targets -= keep_sheet_ids
+        # 남긴 악보 자신(같은 그림 포함)은 원래 악보로
+        km = ",".join("?" for _ in keep_sheet_ids)
+        conn.execute(f"UPDATE songs SET use_song_id = NULL WHERE id IN ({km})", tuple(keep_sheet_ids))
+        if targets:
+            tm = ",".join("?" for _ in targets)
+            conn.execute(
+                f"UPDATE songs SET use_song_id = ?, title = ?, title_manual = 1, song_key = ?, key_source = ?,"
+                f" tempo = ? WHERE id IN ({tm})",
+                (keep_id, keep["title"], keep["song_key"], keep["key_source"] or "manual", keep["tempo"], *targets))
+            # 없어진 악보를 가리키던 곡들도 남긴 악보로
+            conn.execute(f"UPDATE songs SET use_song_id = ? WHERE use_song_id IN ({tm})", (keep_id, *targets))
+        conn.commit()
+        return _song_from_row(_get_song_row(conn, keep_id), dedupe.index(conn)["sheet_of"])
+
+
+@router.post("/songs/{song_id}/restore", response_model=Song)
+def restore_sheet(song_id: int):
+    """'하나만 남기기'를 취소하고 이 곡(같은 그림 포함)을 원래 악보로 보여준다."""
+    with get_conn() as conn:
+        _get_song_row(conn, song_id)
+        ids = dedupe.same_sheet_song_ids(conn, song_id)
+        marks = ",".join("?" for _ in ids)
+        conn.execute(f"UPDATE songs SET use_song_id = NULL WHERE id IN ({marks})", tuple(ids))
+        conn.commit()
+        return _song_from_row(_get_song_row(conn, song_id), dedupe.index(conn)["sheet_of"])
+
+
 @router.patch("/songs/{song_id}", response_model=Song)
 def update_song(song_id: int, req: SongUpdateRequest):
     """제목·키·빠르기는 같은 악보(다른 콘티에 들어간 같은 그림) 전부에 반영한다.
@@ -708,7 +775,7 @@ def update_song(song_id: int, req: SongUpdateRequest):
         raise HTTPException(400, "tempo 는 slow / fast / '' 중 하나")
     with get_conn() as conn:
         old = _get_song_row(conn, song_id)
-        same = dedupe.same_sheet_song_ids(conn, song_id)
+        same = _linked_song_ids(conn, song_id)
         marks = ",".join("?" for _ in same)
         if req.title is not None and req.title.strip() != old["title"]:
             conn.execute(f"UPDATE songs SET title = ?, title_manual = 1 WHERE id IN ({marks})",
@@ -829,6 +896,10 @@ def export_setlist(req: SetlistExportRequest):
             r = conn.execute("SELECT * FROM songs WHERE id = ?", (sid,)).fetchone()
             if r is None:
                 raise HTTPException(404, f"곡을 찾을 수 없습니다 (id={sid})")
+            if r["use_song_id"]:   # 하나만 남긴 악보로 내보낸다 (제목은 이 곡 그대로)
+                k = conn.execute("SELECT * FROM songs WHERE id = ?", (r["use_song_id"],)).fetchone()
+                if k is not None:
+                    r = {**dict(r), "score_id": k["score_id"], "page_start": k["page_start"], "page_end": k["page_end"]}
             songs.append(r)
         annots = {}
         if req.include_annotations:

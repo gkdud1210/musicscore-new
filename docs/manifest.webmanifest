@@ -1,6 +1,6 @@
 {
-  "name": "찬양악보 라이브러리",
-  "short_name": "찬양악보",
+  "name": "J&I worship",
+  "short_name": "J&I worship",
   "description": "콘티 PDF에서 곡을 찾아 새 콘티를 만드는 찬양 악보 라이브러리",
   "lang": "ko",
   "start_url": "/index.html",
