@@ -18,10 +18,11 @@ from typing import List, Optional
 from urllib.parse import quote
 
 import fitz
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from auth import role_from_request
 from db import SCORES_DIR, get_conn, score_dir
 from ocr import (
     _norm_title,
@@ -66,6 +67,7 @@ class ScoreSummary(BaseModel):
     original_filename: Optional[str] = None
     songs: List[SongBrief] = []
     duplicate: bool = False   # 같은 파일을 이미 올려서 새로 저장하지 않았음
+    confirmed: bool = True    # False면 업로드 후 아직 확인 전 → 검색에 안 나옴
 
 
 class ScoreDetail(ScoreSummary):
@@ -105,6 +107,10 @@ class SongCreateRequest(BaseModel):
 
 class SplitRequest(BaseModel):
     page: int
+
+
+class ConfirmRequest(BaseModel):
+    confirmed: bool = True
 
 
 class SetlistExportRequest(BaseModel):
@@ -218,6 +224,7 @@ def _row_to_summary(conn, row) -> ScoreSummary:
         updated_at=row["updated_at"],
         conti_date=row["conti_date"],
         original_filename=row["original_filename"],
+        confirmed=bool(row["confirmed"]),
         songs=[_song_brief(s) for s in _song_rows_for_score(conn, row["id"])],
     )
 
@@ -350,7 +357,8 @@ def upload_score(file: UploadFile = File(...)):
         # 2) 저장은 짧은 트랜잭션 한 번으로
         with get_conn() as conn:
             cur = conn.execute(
-                "INSERT INTO scores (title, original_filename, page_count, conti_date, file_hash) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO scores (title, original_filename, page_count, conti_date, file_hash, confirmed)"
+                " VALUES (?, ?, ?, ?, ?, 0)",
                 (stem, filename, doc.page_count, guess_date_from_filename(stem), file_hash),
             )
             score_id = cur.lastrowid
@@ -386,13 +394,15 @@ def upload_score(file: UploadFile = File(...)):
 
 
 @router.get("/scores", response_model=List[ScoreSummary])
-def list_scores(q: Optional[str] = Query(None)):
-    sql = "SELECT * FROM scores"
-    params: list = []
+def list_scores(request: Request, q: Optional[str] = Query(None)):
+    where, params = [], []
     if q:
-        sql += " WHERE title LIKE ? OR original_filename LIKE ? OR id IN (SELECT score_id FROM songs WHERE title LIKE ?)"
+        where.append("(title LIKE ? OR original_filename LIKE ? OR id IN (SELECT score_id FROM songs WHERE title LIKE ?))")
         params = [f"%{q}%"] * 3
-    sql += " ORDER BY (conti_date IS NULL), conti_date DESC, created_at DESC"
+    if role_from_request(request) != "admin":
+        where.append("confirmed = 1")  # 확인 전 콘티는 관리자에게만 보인다
+    sql = "SELECT * FROM scores" + (" WHERE " + " AND ".join(where) if where else "")
+    sql += " ORDER BY confirmed, (conti_date IS NULL), conti_date DESC, created_at DESC"
     with get_conn() as conn:
         return [_row_to_summary(conn, r) for r in conn.execute(sql, params).fetchall()]
 
@@ -418,6 +428,17 @@ def update_score(score_id: int, req: ScoreUpdateRequest):
             conn.execute("DELETE FROM score_chords WHERE score_id = ?", (score_id,))
             conn.executemany("INSERT OR IGNORE INTO score_chords (score_id, chord) VALUES (?, ?)",
                              [(score_id, c) for c in sorted({c.strip() for c in req.chords if c.strip()})])
+        conn.commit()
+    return get_score_summary(score_id)
+
+
+@router.post("/scores/{score_id}/confirm", response_model=ScoreSummary)
+def confirm_score(score_id: int, req: ConfirmRequest = ConfirmRequest()):
+    """업로드 확인 완료 → 라이브러리(검색)에 넣는다. confirmed=false면 다시 확인 대기로."""
+    get_score_row(score_id)
+    with get_conn() as conn:
+        conn.execute("UPDATE scores SET confirmed = ?, updated_at = datetime('now') WHERE id = ?",
+                     (int(req.confirmed), score_id))
         conn.commit()
     return get_score_summary(score_id)
 
@@ -510,6 +531,8 @@ def search_songs(
     if score_id is not None:
         where.append("so.score_id = ?")
         params.append(score_id)
+    else:
+        where.append("sc.confirmed = 1")  # 라이브러리 검색에는 확인된 콘티의 곡만
 
     sql = SONG_SELECT + (" WHERE " + " AND ".join(where) if where else "")
     sql += " ORDER BY so.title COLLATE NOCASE, (sc.conti_date IS NULL), sc.conti_date DESC, so.id DESC"
@@ -521,12 +544,13 @@ def search_songs(
 def song_facets():
     """키별 곡 수, 코드 목록 — 필터 칩용."""
     with get_conn() as conn:
+        ok = "score_id IN (SELECT id FROM scores WHERE confirmed = 1)"
         keys = [{"key": r["song_key"], "count": r["n"]} for r in conn.execute(
-            "SELECT song_key, COUNT(*) AS n FROM songs WHERE song_key != '' GROUP BY song_key")]
+            f"SELECT song_key, COUNT(*) AS n FROM songs WHERE song_key != '' AND {ok} GROUP BY song_key")]
         chord_set = set()
-        for r in conn.execute("SELECT chords_text FROM songs"):
+        for r in conn.execute(f"SELECT chords_text FROM songs WHERE {ok}"):
             chord_set.update((r["chords_text"] or "").split())
-        total = conn.execute("SELECT COUNT(*) FROM songs").fetchone()[0]
+        total = conn.execute(f"SELECT COUNT(*) FROM songs WHERE {ok}").fetchone()[0]
     return {"keys": keys, "chords": sorted(chord_set), "total": total}
 
 
@@ -597,6 +621,32 @@ def split_song(song_id: int, req: SplitRequest):
         conn.execute("UPDATE songs SET page_end = ? WHERE id = ?", (req.page - 1, song_id))
         _recompute_song(conn, song_id)
         _insert_song(conn, s["score_id"], req.page, s["page_end"])
+        conn.commit()
+        score_id = s["score_id"]
+    return get_score_summary(score_id)
+
+
+@router.post("/songs/{song_id}/remove-page", response_model=ScoreSummary)
+def remove_page_from_song(song_id: int, req: SplitRequest):
+    """곡에서 페이지 하나만 뺀다 (잘못 붙은 악보 등). 빠진 페이지는 '곡에 포함되지 않은
+    페이지'로 남아서 나중에 다시 곡으로 추가할 수 있다. 가운데 페이지면 앞뒤로 나뉜다."""
+    with get_conn() as conn:
+        s = _get_song_row(conn, song_id)
+        start, end, p = s["page_start"], s["page_end"], req.page
+        if not (start <= p <= end):
+            raise HTTPException(400, "곡 범위 밖의 페이지입니다")
+        if start == end:
+            conn.execute("DELETE FROM songs WHERE id = ?", (song_id,))
+        elif p == start:
+            conn.execute("UPDATE songs SET page_start = ? WHERE id = ?", (p + 1, song_id))
+            _recompute_song(conn, song_id)
+        elif p == end:
+            conn.execute("UPDATE songs SET page_end = ? WHERE id = ?", (p - 1, song_id))
+            _recompute_song(conn, song_id)
+        else:
+            conn.execute("UPDATE songs SET page_end = ? WHERE id = ?", (p - 1, song_id))
+            _recompute_song(conn, song_id)
+            _insert_song(conn, s["score_id"], p + 1, end)
         conn.commit()
         score_id = s["score_id"]
     return get_score_summary(score_id)

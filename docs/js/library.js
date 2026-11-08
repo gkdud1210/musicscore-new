@@ -424,11 +424,16 @@ function renderContis() {
     return;
   }
   empty.classList.add('hidden');
-  list.innerHTML = LibState.contis.map(c => `
-    <div class="conti-row">
+  const pendingCount = LibState.contis.filter(c => !c.confirmed).length;
+  list.innerHTML = (pendingCount ? `
+    <div class="review-banner compact">
+      <span>🆕 업로드 후 확인하지 않은 콘티가 <b>${pendingCount}개</b> 있어요. 확인해야 라이브러리 검색에 나와요.</span>
+      <button class="btn-primary btn-compact" data-action="review-next">확인하러 가기</button>
+    </div>` : '') + LibState.contis.map(c => `
+    <div class="conti-row${c.confirmed ? '' : ' pending'}">
       <div class="conti-thumb lib-card-thumb" data-action="open-conti" data-id="${c.id}">${img(c.thumbnail_url, c.title)}</div>
       <div class="conti-info">
-        <p class="conti-title" data-action="open-conti" data-id="${c.id}">${escapeHtml(c.title)}</p>
+        <p class="conti-title" data-action="open-conti" data-id="${c.id}">${c.confirmed ? '' : '<span class="pending-badge">확인 필요</span> '}${escapeHtml(c.title)}</p>
         <p class="song-meta">${c.conti_date ? `📅 ${escapeHtml(c.conti_date)} · ` : ''}${c.songs.length}곡 · ${c.page_count}페이지</p>
         <div class="conti-songs">
           ${c.songs.map((s, i) => `<span class="conti-song-chip">${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</span>`).join('')
@@ -492,8 +497,23 @@ function renderContiModal(conti, songs) {
     else if (s.page_start === p) blocks.push({ song: s });
   }
   let songIndex = 0;
+  const pending = !conti.confirmed;
+  const confirmBtn = pending
+    ? `<button type="button" class="btn-primary confirm-btn" data-action="confirm-conti" data-id="${conti.id}">✅ 확인 완료 — 라이브러리에 넣기</button>`
+    : '';
 
   document.getElementById('libModalBody').innerHTML = `
+    ${pending ? `
+      <div class="review-banner">
+        <p class="review-banner-title">🆕 업로드 확인 중 · 아직 라이브러리 검색에는 안 나와요</p>
+        <p class="review-banner-sub">
+          곡이 제대로 나뉘었는지, 제목·키가 맞는지 확인해주세요.<br>
+          · 한 칸에 악보 두 개가 붙어 있으면 → 두 번째 악보 아래 <b>✂ 따로 분리</b><br>
+          · 필요 없는 페이지(표지·순서지·잘못 붙은 악보) → <b>🗑 페이지 빼기</b><br>
+          · 한 곡이 둘로 나뉘었으면 → 뒤쪽 곡의 <b>⤴ 앞 곡과 합치기</b>
+        </p>
+        ${confirmBtn}
+      </div>` : ''}
     <form class="conti-edit-head" data-action-submit="save-conti" data-id="${conti.id}">
       <input type="text" name="title" class="lib-edit-title-input conti-title-input" value="${escapeHtml(conti.title)}" />
       <input type="date" name="conti_date" class="lib-edit-title-input" value="${escapeHtml(conti.conti_date || '')}" />
@@ -531,12 +551,39 @@ function renderContiModal(conti, songs) {
             ${s.image_urls.map((u, i) => {
               const page = s.page_start + i;
               return `<figure class="song-page">${img(u, s.title)}
-                <figcaption>p.${page}${i > 0 ? ` <button class="btn-link" data-action="split" data-id="${s.id}" data-page="${page}">✂ 여기부터 새 곡</button>` : ''}</figcaption>
+                <figcaption><span>p.${page}</span>
+                  <span class="page-tools">
+                    ${i > 0 ? `<button type="button" class="btn-sm" data-action="split" data-id="${s.id}" data-page="${page}" title="이 페이지부터 별도의 곡으로 나눠요 (콘티 순서는 그대로)">✂ 따로 분리</button>` : ''}
+                    <button type="button" class="btn-sm" data-action="remove-page" data-id="${s.id}" data-page="${page}" title="이 페이지만 곡에서 빼요 (PDF 원본은 그대로)">🗑 페이지 빼기</button>
+                  </span>
+                </figcaption>
               </figure>`;
             }).join('')}
           </div>
         </div>`;
-    }).join('')}`;
+    }).join('')}
+    ${pending ? `<div class="review-footer">${confirmBtn}</div>` : ''}`;
+}
+
+async function confirmConti(id) {
+  try {
+    await apiJson(`/api/scores/${id}/confirm`, jsonBody('POST', { confirmed: true }));
+    showToast('확인 완료! 라이브러리에 들어갔어요.', 'success');
+    LibState.modalDirty = true;
+    const c = LibState.contis.find(x => x.id === id);
+    if (c) c.confirmed = true;
+    const next = LibState.contis.find(x => !x.confirmed);
+    if (next) {
+      showToast(`확인할 콘티가 ${LibState.contis.filter(x => !x.confirmed).length}개 더 있어요. 다음 콘티를 열게요.`, 'info', 4000);
+      LibState.modal = { type: 'conti', id: next.id, back: null };
+      await reloadContiModal();
+    } else {
+      closeModal();
+    }
+  } catch (e) {
+    showToast('실패: ' + e.message, 'error');
+    document.querySelectorAll('[data-action="confirm-conti"]').forEach(b => { b.disabled = false; });
+  }
 }
 
 /** 팀원(보기 전용)용 콘티 화면: 곡 순서대로 악보만 */
@@ -619,8 +666,18 @@ function initDelegatedActions() {
         contiAction(apiJson(`/api/songs/${id}/merge-prev`, { method: 'POST' }), '앞 곡과 합쳤어요');
         break;
       case 'split':
-        contiAction(apiJson(`/api/songs/${id}/split`, jsonBody('POST', { page: Number(el.dataset.page) })), '새 곡으로 나눴어요');
+        contiAction(apiJson(`/api/songs/${id}/split`, jsonBody('POST', { page: Number(el.dataset.page) })), '따로 분리했어요 — 새 곡의 제목·키를 확인해주세요');
         break;
+      case 'remove-page':
+        contiAction(apiJson(`/api/songs/${id}/remove-page`, jsonBody('POST', { page: Number(el.dataset.page) })),
+          `p.${el.dataset.page}를 뺐어요 (다시 넣으려면 "＋ 곡으로 추가")`);
+        break;
+      case 'confirm-conti': el.disabled = true; confirmConti(id); break;
+      case 'review-next': {
+        const next = LibState.contis.find(x => !x.confirmed);
+        if (next) openContiModal(next.id);
+        break;
+      }
       case 'delete-song':
         e.preventDefault();
         removeFromSetlist(id);
@@ -825,16 +882,16 @@ async function runUploadQueue() {
   const ok = items.filter(x => x.status === 'ok');
   const dupes = items.filter(x => x.status === 'dup');
   const songCount = ok.reduce((n, x) => n + x.conti.songs.length, 0);
-  if (ok.length) showToast(`콘티 ${ok.length}개 업로드 완료 — 곡 ${songCount}개를 찾았어요.`, 'success', 5000);
+  if (ok.length) showToast(`콘티 ${ok.length}개 업로드 완료 — 곡 ${songCount}개를 찾았어요. 확인 후 '확인 완료'를 누르면 라이브러리에 들어가요.`, 'success', 6000);
   if (dupes.length) showToast(`이미 올린 콘티라서 다시 저장하지 않았어요: ${dupes.map(x => x.file.name).join(', ')}`, 'info', 6000);
   items.filter(x => x.status === 'fail').forEach(x => showToast(`업로드 실패: ${x.file.name}: ${x.note}`, 'error', 7000));
 
   resetFilters();
-  LibState.tab = items.length > 1 ? 'contis' : 'songs';
+  LibState.tab = 'contis';
   await refreshAll();
-  // 파일 하나를 올렸으면 그 콘티의 곡들을 바로 보여준다 (여러 개면 콘티 목록 탭)
-  const last = items.length === 1 ? items[0].conti : null;
-  if (last) openContiModal(last.id);
+  // 올린 콘티를 바로 확인 화면으로 연다 (여러 개면 첫 번째부터, 확인 완료를 누르면 다음 것으로)
+  const firstNew = ok[0]?.conti || (items.length === 1 ? items[0].conti : null);
+  if (firstNew) openContiModal(firstNew.id);
 }
 
 /* ============================================================

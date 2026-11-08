@@ -1782,3 +1782,23 @@ a.logo { text-decoration: none; color: inherit; }
 .song-conti-actions { display: flex; gap: 6px; }
 .conti-song-chip.current { background: var(--accent-dim); border-color: var(--accent); color: var(--text-primary); font-weight: 700; }
 .modal-back { display: inline-block; margin-bottom: 14px; font-size: 13px; }
+
+/* 업로드 확인(컨펌) 단계 */
+.review-banner {
+  background: rgba(124,107,255,0.12); border: 1px solid var(--accent);
+  border-radius: var(--radius-lg); padding: 16px 18px; margin-bottom: 16px;
+}
+.review-banner-title { font-weight: 800; font-size: 15px; margin-bottom: 6px; }
+.review-banner-sub { font-size: 13px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 12px; }
+.review-banner.compact { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 14px; margin-bottom: 4px; }
+.review-footer { display: flex; justify-content: center; padding: 20px 0 8px; }
+.confirm-btn { font-size: 15px; padding: 12px 22px; }
+.pending-badge {
+  display: inline-block; font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 999px;
+  background: #ffb020; color: #1a1200; vertical-align: middle;
+}
+.conti-row.pending { border-color: #ffb020; }
+.song-pages.small { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.song-page figcaption { flex-wrap: wrap; }
+.page-tools { display: flex; gap: 4px; flex-wrap: wrap; }
+.page-tools .btn-sm { font-size: 11px; padding: 4px 8px; }
