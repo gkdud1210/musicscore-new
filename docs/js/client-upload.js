@@ -118,7 +118,8 @@ async function clientUploadPdf(file, onProgress) {
   const hash = await sha256Hex(buf);
   const pdf = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
   const pageCount = pdf.numPages;
-  let conti = await apiJson('/api/scores', jsonBody('POST', { filename: file.name, page_count: pageCount, file_hash: hash }));
+  // 맥 파일 이름의 풀어쓴 한글(NFD)은 검색에 안 걸리므로 붙은 형태(NFC)로
+  let conti = await apiJson('/api/scores', jsonBody('POST', { filename: file.name.normalize('NFC'), page_count: pageCount, file_hash: hash }));
   if (conti.duplicate) { pdf.destroy(); return conti; }
 
   try {

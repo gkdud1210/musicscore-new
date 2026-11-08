@@ -11,6 +11,7 @@
 
 import json
 import os
+import unicodedata
 import sqlite3
 import sys
 
@@ -49,7 +50,8 @@ def main():
         chords = [r["chord"] for r in rows("SELECT chord FROM score_chords WHERE score_id = ? ORDER BY chord", sid)]
         status = s.get("status") or "ready"
         bundle["scores"].append({
-            "id": sid, "title": s["title"], "original_filename": s["original_filename"],
+            "id": sid, "title": unicodedata.normalize("NFC", s["title"] or ""),
+            "original_filename": unicodedata.normalize("NFC", s["original_filename"] or ""),
             "page_count": s["page_count"], "conti_date": s.get("conti_date"), "file_hash": s.get("file_hash"),
             "confirmed": s.get("confirmed", 1),
             "status": "error" if status == "processing" else status, "status_detail": s.get("status_detail") or "",

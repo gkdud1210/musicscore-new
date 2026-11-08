@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
@@ -383,6 +384,7 @@ def upload_score(file: UploadFile = File(...)):
         doc.close()
         raise HTTPException(400, "빈 PDF입니다")
 
+    filename = unicodedata.normalize("NFC", filename)   # 맥 파일 이름의 풀어쓴 한글(NFD) → 검색되는 형태로
     stem = os.path.splitext(os.path.basename(filename))[0]
     page_count = doc.page_count
     file_hash = hashlib.sha256(contents).hexdigest()

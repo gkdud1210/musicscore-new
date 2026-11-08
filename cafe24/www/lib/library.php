@@ -681,24 +681,44 @@ function current_live(): ?array
 
 function api_get_live(): array { return ['live' => current_live()]; }
 
+function live_songs_for(array $ids, array $sheetOf): array
+{
+    $ids = array_slice(array_values(array_unique(array_map('intval', $ids))), 0, 80);
+    if (!$ids) return [];
+    $rows = [];
+    foreach (q_all(SONG_SELECT . ' WHERE so.id IN (' . marks_sql($ids) . ')', $ids) as $r) $rows[(int)$r['id']] = song_from_row($r, $sheetOf);
+    $out = [];
+    foreach ($ids as $i) {
+        if (isset($rows[$i])) $out[] = array_intersect_key($rows[$i], array_flip(['id', 'title', 'key', 'image_urls']));
+    }
+    return $out;
+}
+
+/** NOW / 예배 라이브: sets(여러 콘티)를 보내면 위 메뉴에서 오가며 본다. song_ids 만 보내면 콘티 하나 */
 function api_start_live(): array
 {
     $b = body_json();
-    $ids = array_slice(array_values(array_unique(array_map('intval', (array)($b['song_ids'] ?? [])))), 0, 60);
-    if (!$ids) throw new ApiError(400, '보낼 곡이 없어요');
-    $rows = [];
+    $raw = !empty($b['sets']) && is_array($b['sets']) ? $b['sets'] : [['title' => $b['title'] ?? '', 'song_ids' => $b['song_ids'] ?? []]];
     $sheetOf = sheet_of_map();
-    foreach (q_all(SONG_SELECT . ' WHERE so.id IN (' . marks_sql($ids) . ')', $ids) as $r) $rows[(int)$r['id']] = song_from_row($r, $sheetOf);
-    $songs = [];
-    foreach ($ids as $i) {
-        if (isset($rows[$i])) $songs[] = array_intersect_key($rows[$i], array_flip(['id', 'title', 'key', 'image_urls']));
+    $sets = [];
+    foreach (array_slice($raw, 0, 12) as $st) {
+        $songs = live_songs_for((array)($st['song_ids'] ?? []), $sheetOf);
+        if ($songs) {
+            $sets[] = [
+                'title' => mb_substr(trim((string)($st['title'] ?? '')), 0, 100) ?: '콘티',
+                'conti_id' => isset($st['conti_id']) ? (int)$st['conti_id'] : null,
+                'songs' => $songs,
+            ];
+        }
     }
-    if (!$songs) throw new ApiError(404, '곡을 찾을 수 없어요');
+    if (!$sets) throw new ApiError(400, '보낼 곡이 없어요');
     $now = microtime(true);
     $live = [
         'id' => (int)($now * 1000),
-        'title' => mb_substr(trim((string)($b['title'] ?? '')), 0, 100) ?: '오늘 콘티',
-        'songs' => $songs,
+        'title' => mb_substr(trim((string)($b['title'] ?? '')), 0, 100) ?: $sets[0]['title'],
+        'date' => valid_date($b['date'] ?? null),
+        'sets' => $sets,
+        'songs' => array_merge(...array_column($sets, 'songs')),   // 예전 화면용 (한 줄로)
         'started_ts' => (int)$now,
         'started_at' => date('H:i', (int)$now),
     ];
@@ -710,4 +730,54 @@ function api_stop_live(): array
 {
     state_set('live', null);
     return ['live' => null];
+}
+
+// ── 예배 라이브 셋팅 (날짜별) ─────────────────────────────────
+function valid_date($d): ?string
+{
+    return is_string($d) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) ? $d : null;
+}
+
+function service_out(string $date, array $data): array
+{
+    return ['date' => $date, 'title' => $data['title'] ?? '', 'sets' => $data['sets'] ?? []];
+}
+
+function api_list_services(): array
+{
+    $out = [];
+    foreach (q_all("SELECT k, v FROM app_state WHERE k LIKE 'service:%' ORDER BY k DESC LIMIT 60") as $r) {
+        $out[] = service_out(substr($r['k'], 8), json_decode((string)$r['v'], true) ?: []);
+    }
+    return ['services' => $out];
+}
+
+function api_get_service(string $date): array
+{
+    if (!valid_date($date)) throw new ApiError(400, '날짜 형식이 잘못됐어요');
+    $v = state_get("service:$date");
+    return ['service' => $v ? service_out($date, json_decode($v, true) ?: []) : null];
+}
+
+function api_put_service(string $date): array
+{
+    if (!valid_date($date)) throw new ApiError(400, '날짜 형식이 잘못됐어요');
+    $b = body_json();
+    $sets = [];
+    foreach (array_slice((array)($b['sets'] ?? []), 0, 12) as $st) {
+        $ids = array_slice(array_values(array_unique(array_map('intval', (array)($st['song_ids'] ?? [])))), 0, 80);
+        if (!$ids) continue;
+        $sets[] = ['title' => mb_substr(trim((string)($st['title'] ?? '')), 0, 100) ?: '콘티',
+                   'conti_id' => isset($st['conti_id']) ? (int)$st['conti_id'] : null, 'song_ids' => $ids];
+    }
+    $data = ['title' => mb_substr(trim((string)($b['title'] ?? '')), 0, 100), 'sets' => $sets];
+    state_set("service:$date", json_encode($data, JSON_UNESCAPED_UNICODE));
+    return ['service' => service_out($date, $data)];
+}
+
+function api_delete_service(string $date): array
+{
+    if (!valid_date($date)) throw new ApiError(400, '날짜 형식이 잘못됐어요');
+    q('DELETE FROM app_state WHERE k = ?', ["service:$date"]);
+    return ['success' => true];
 }

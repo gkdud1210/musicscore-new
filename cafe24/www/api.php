@@ -61,6 +61,10 @@ $ROUTES = [
     ['GET', '#^/live$#', 'api_get_live', 'member'],
     ['POST', '#^/live$#', 'api_start_live', 'member_ok'],
     ['DELETE', '#^/live$#', 'api_stop_live', 'member_ok'],
+    ['GET', '#^/services$#', 'api_list_services', 'member'],
+    ['GET', '#^/services/(\d{4}-\d{2}-\d{2})$#', 'api_get_service', 'member'],
+    ['PUT', '#^/services/(\d{4}-\d{2}-\d{2})$#', 'api_put_service', 'admin'],
+    ['DELETE', '#^/services/(\d{4}-\d{2}-\d{2})$#', 'api_delete_service', 'admin'],
 
     ['POST', '#^/admin/import$#', 'api_admin_import', 'admin'],
     ['POST', '#^/admin/rehash$#', 'api_admin_rehash', 'admin'],
@@ -84,7 +88,7 @@ try {
         if (!preg_match($pat, $path, $mm)) continue;
         $allowed = true;
         if ($m !== $method) continue;
-        $found = [$fn, $who, array_map('intval', array_slice($mm, 1))];
+        $found = [$fn, $who, array_map(fn($v) => ctype_digit($v) ? (int)$v : $v, array_slice($mm, 1))];
         break;
     }
     if (!$found) throw new ApiError($allowed ? 405 : 404, $allowed ? '지원하지 않는 요청이에요' : '없는 주소예요');

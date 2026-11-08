@@ -10,6 +10,7 @@ stdlib sqlite3 기반 — ORM 없이 얇은 접근 계층
 
 import os
 import sqlite3
+import unicodedata
 
 STORAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage")
 SCORES_DIR = os.path.join(STORAGE_DIR, "scores")
@@ -118,6 +119,18 @@ def init_db():
                                "use_song_id INTEGER REFERENCES songs(id) ON DELETE SET NULL")
         from dedupe import init_dedupe_db
         init_dedupe_db(conn)
+        _normalize_hangul(conn)
+
+
+def _normalize_hangul(conn):
+    """맥 파일 이름에서 온 한글은 자모가 풀린 형태(NFD)라 검색에 안 걸린다 → 붙은 형태(NFC)로 한 번 정리."""
+    nfc = lambda s: unicodedata.normalize("NFC", s) if s else s
+    for table, cols in (("scores", ("title", "original_filename")), ("songs", ("title",))):
+        for r in conn.execute(f"SELECT id, {', '.join(cols)} FROM {table}").fetchall():
+            fixed = {c: nfc(r[c]) for c in cols if r[c] and nfc(r[c]) != r[c]}
+            if fixed:
+                conn.execute(f"UPDATE {table} SET {', '.join(f'{c} = ?' for c in fixed)} WHERE id = ?", (*fixed.values(), r["id"]))
+    conn.commit()
 
 
 def score_dir(score_id: int) -> str:
