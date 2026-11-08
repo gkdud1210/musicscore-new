@@ -1890,3 +1890,15 @@ a.logo { text-decoration: none; color: inherit; }
 .ai-row-sub { font-size: 12px; color: var(--text-muted); }
 .ai-btn { border-color: var(--accent); }
 .error-hint { color: #ff8a8a; }
+
+/* 콘티 화면: 전체 저장 */
+.save-all-bar {
+  position: sticky; bottom: 0; z-index: 5;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end;
+  margin: 16px -4px 0; padding: 12px 14px;
+  background: var(--bg-card); border: 2px solid #f59e0b; border-radius: 12px;
+  box-shadow: 0 -4px 16px rgba(0,0,0,.12);
+}
+.save-all-bar #saveAllCount { flex: 1; min-width: 140px; font-weight: 600; font-size: 14px; }
+.save-all-bar .btn-primary { min-width: 120px; }
+form.dirty .lib-edit-title-input { border-color: #f59e0b; background: rgba(245,158,11,.08); }

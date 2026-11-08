@@ -397,7 +397,7 @@ async function loadAllVersions() {
 function renderSongModal() {
   const m = LibState.modal;
   const versions = m.versions || [];
-  if (!versions.length) { closeModal(); return; }
+  if (!versions.length) { closeModal(true); return; }
   const contiCount = new Set(versions.map(v => v.score_id)).size;
   document.getElementById('libModalBody').innerHTML = `
     <h2 class="lib-modal-title">${escapeHtml(versions[0].title)}</h2>
@@ -561,7 +561,7 @@ async function reloadContiModal() {
     document.querySelector('.lib-modal')?.scrollTo(0, 0);
   } catch (e) {
     showToast('콘티를 불러오지 못했어요: ' + e.message, 'error');
-    closeModal();
+    closeModal(true);
   }
 }
 
@@ -620,7 +620,6 @@ function renderContiModal(conti, songs) {
     <form class="conti-edit-head" data-action-submit="save-conti" data-id="${conti.id}">
       <input type="text" name="title" class="lib-edit-title-input conti-title-input" value="${escapeHtml(conti.title)}" />
       <input type="date" name="conti_date" class="lib-edit-title-input" value="${escapeHtml(conti.conti_date || '')}" />
-      <button type="submit" class="btn-primary btn-compact">저장</button>
     </form>
     <div class="now-row"><button type="button" class="btn-now" data-live="send-conti">📡 NOW · 지금 이 콘티 띄우기</button></div>
     <p class="lib-modal-sub">
@@ -652,7 +651,6 @@ function renderContiModal(conti, songs) {
             <span class="conti-song-no">${songIndex}</span>
             <input type="text" name="title" class="lib-edit-title-input" value="${escapeHtml(s.title)}" />
             <input type="text" name="key" class="lib-edit-title-input song-key-input" value="${escapeHtml(s.key)}" placeholder="키" title="${escapeHtml(keySourceLabel(s.key_source))}" />
-            <button type="submit" class="btn-sm">저장</button>
             ${isFirst ? '' : `<button type="button" class="btn-sm" data-action="merge-prev" data-id="${s.id}" title="앞 곡의 다음 페이지로 합치기">⤴ 앞 곡과 합치기</button>`}
             <button type="button" class="btn-sm" data-action="delete-song" data-id="${s.id}">곡에서 빼기</button>
             ${addButton(s)}
@@ -673,7 +671,72 @@ function renderContiModal(conti, songs) {
           </div>
         </div>`;
     }).join('')}
-    ${pending ? `<div class="review-footer">${confirmBtn}</div>` : ''}`;
+    ${pending ? `<div class="review-footer">${confirmBtn}</div>` : ''}
+    <div class="save-all-bar hidden" id="saveAllBar">
+      <span id="saveAllCount"></span>
+      <button type="button" class="btn-link" data-action="undo-all">되돌리기</button>
+      <button type="button" class="btn-primary" data-action="save-all">💾 전체 저장</button>
+    </div>`;
+  updateSaveAllBar();
+}
+
+/* ── 콘티 화면: 여러 곡을 고친 뒤 한 번에 저장 ───────────── */
+function dirtyContiForms() {
+  return [...document.querySelectorAll('#libModalBody form[data-action-submit]')].filter(f =>
+    [...f.querySelectorAll('input[name]')].some(i => i.value !== i.defaultValue));
+}
+
+function updateSaveAllBar() {
+  const bar = document.getElementById('saveAllBar');
+  if (!bar) return;
+  document.querySelectorAll('#libModalBody form[data-action-submit]').forEach(f => f.classList.remove('dirty'));
+  const dirty = dirtyContiForms();
+  dirty.forEach(f => f.classList.add('dirty'));
+  bar.classList.toggle('hidden', !dirty.length);
+  document.getElementById('saveAllCount').textContent = `✏️ ${dirty.length}곳 수정됨 · 아직 저장 안 됨`;
+}
+
+/** 고친 곳을 모두 저장한다. 실패한 곳이 있으면 false. reload=false면 화면은 그대로 둔다. */
+async function saveAllConti({ reload = true, quiet = false } = {}) {
+  const forms = dirtyContiForms();
+  if (!forms.length) return true;
+  const btn = document.querySelector('[data-action="save-all"]');
+  if (btn) { btn.disabled = true; btn.textContent = '저장하는 중...'; }
+  let ok = 0;
+  const failed = [];
+  for (const f of forms) {   // 하나씩 차례로 (DB에 동시에 몰리지 않게)
+    const id = Number(f.dataset.id);
+    try {
+      if (f.dataset.actionSubmit === 'save-conti') {
+        await apiJson(`/api/scores/${id}`, jsonBody('PATCH', {
+          title: f.elements.title.value, conti_date: f.elements.conti_date.value,
+        }));
+      } else {
+        const title = f.elements.title.value.trim();
+        const key = f.elements.key.value.trim();
+        await apiJson(`/api/songs/${id}`, jsonBody('PATCH', { title, key }));
+        updateSetlistItem(id, { title, key });
+      }
+      [...f.querySelectorAll('input[name]')].forEach(i => { i.defaultValue = i.value; });
+      ok++;
+    } catch (e) {
+      failed.push(e.message);
+    }
+  }
+  LibState.modalDirty = true;
+  if (failed.length) showToast(`${ok}곳 저장, ${failed.length}곳 실패: ${failed[0]}`, 'error', 6000);
+  else if (!quiet) showToast(`${ok}곳 모두 저장했어요.`, 'success');
+  if (reload && !failed.length && LibState.modal?.type === 'conti') await reloadContiModal();
+  else {
+    if (btn) { btn.disabled = false; btn.textContent = '💾 전체 저장'; }
+    updateSaveAllBar();
+  }
+  return !failed.length;
+}
+
+function undoAllConti() {
+  document.querySelectorAll('#libModalBody form[data-action-submit] input[name]').forEach(i => { i.value = i.defaultValue; });
+  updateSaveAllBar();
 }
 
 async function confirmConti(id) {
@@ -715,9 +778,11 @@ function renderContiModalReadOnly(conti, songs) {
       </div>`).join('')}`;
 }
 
-async function contiAction(promise, okMsg) {
+async function contiAction(makeRequest, okMsg) {
+  // 곡 나누기·빼기 등은 화면을 다시 그리므로, 먼저 고쳐 둔 제목·키를 저장한다
+  if (!(await saveAllConti({ reload: false, quiet: true }))) return;
   try {
-    await promise;
+    await makeRequest();
     if (okMsg) showToast(okMsg, 'success');
     LibState.modalDirty = true;
     await reloadContiModal();
@@ -734,7 +799,16 @@ function showModal() {
   document.body.classList.add('modal-open');
 }
 
-function closeModal() {
+function closeModal(force = false) {
+  if (!force && LibState.modal?.type === 'conti') {
+    const n = dirtyContiForms().length;
+    if (n) {
+      if (confirm(`저장 안 한 수정이 ${n}곳 있어요. 저장하고 닫을까요?\n(취소를 누르면 수정한 내용 없이 닫혀요)`)) {
+        saveAllConti({ reload: false }).then(ok => { if (ok) closeModal(true); });
+        return;
+      }
+    }
+  }
   clearTimeout(LibState.modalPoll);
   document.getElementById('libModal').classList.add('hidden');
   document.body.classList.remove('modal-open');
@@ -783,16 +857,22 @@ function initDelegatedActions() {
       case 'delete-conti': deleteConti(id); break;
       case 'merge-prev':
         e.preventDefault();
-        contiAction(apiJson(`/api/songs/${id}/merge-prev`, { method: 'POST' }), '앞 곡과 합쳤어요');
+        contiAction(() => apiJson(`/api/songs/${id}/merge-prev`, { method: 'POST' }), '앞 곡과 합쳤어요');
         break;
       case 'split':
-        contiAction(apiJson(`/api/songs/${id}/split`, jsonBody('POST', { page: Number(el.dataset.page) })), '따로 분리했어요 — 새 곡의 제목·키를 확인해주세요');
+        contiAction(() => apiJson(`/api/songs/${id}/split`, jsonBody('POST', { page: Number(el.dataset.page) })), '따로 분리했어요 — 새 곡의 제목·키를 확인해주세요');
         break;
       case 'remove-page':
-        contiAction(apiJson(`/api/songs/${id}/remove-page`, jsonBody('POST', { page: Number(el.dataset.page) })),
+        contiAction(() => apiJson(`/api/songs/${id}/remove-page`, jsonBody('POST', { page: Number(el.dataset.page) })),
           `p.${el.dataset.page}를 뺐어요 (다시 넣으려면 "＋ 곡으로 추가")`);
         break;
-      case 'confirm-conti': el.disabled = true; confirmConti(id); break;
+      case 'confirm-conti':
+        el.disabled = true;
+        if (await saveAllConti({ reload: false, quiet: true })) confirmConti(id);
+        else el.disabled = false;
+        break;
+      case 'save-all': saveAllConti(); break;
+      case 'undo-all': undoAllConti(); break;
       case 'review-next': {
         const next = LibState.contis.find(x => !x.confirmed);
         if (next) openContiModal(next.id);
@@ -801,22 +881,22 @@ function initDelegatedActions() {
       case 'delete-song':
         e.preventDefault();
         removeFromSetlist(id);
-        contiAction(apiJson(`/api/songs/${id}`, { method: 'DELETE' }), '곡 목록에서 뺐어요 (PDF 원본은 그대로예요)');
+        contiAction(() => apiJson(`/api/songs/${id}`, { method: 'DELETE' }), '곡 목록에서 뺐어요 (PDF 원본은 그대로예요)');
         break;
       case 'add-page-song': {
         const page = Number(el.dataset.page);
-        contiAction(apiJson(`/api/scores/${el.dataset.score}/songs`, jsonBody('POST', { page_start: page, page_end: page })), '곡으로 추가했어요');
+        contiAction(() => apiJson(`/api/scores/${el.dataset.score}/songs`, jsonBody('POST', { page_start: page, page_end: page })), '곡으로 추가했어요');
         break;
       }
       case 'reprocess':
         if (!confirm('이 콘티를 처음부터 다시 분석할까요? 직접 고친 제목·키·곡 나누기는 사라져요.')) return;
         el.disabled = true;
-        contiAction(apiJson(`/api/scores/${id}/reprocess`, { method: 'POST' }), '다시 분석을 시작했어요');
+        contiAction(() => apiJson(`/api/scores/${id}/reprocess`, { method: 'POST' }), '다시 분석을 시작했어요');
         break;
       case 'reprocess-ai':
         if (!confirm('Claude AI로 이 콘티를 다시 읽을까요?\n· 직접 고친 제목·키·곡 나누기는 사라져요\n· 페이지마다 Claude API 사용료가 들어요')) return;
         el.disabled = true;
-        contiAction(apiJson(`/api/scores/${id}/reprocess?engine=ai`, { method: 'POST' }), 'AI 인식을 시작했어요');
+        contiAction(() => apiJson(`/api/scores/${id}/reprocess?engine=ai`, { method: 'POST' }), 'AI 인식을 시작했어요');
         break;
       case 'setlist-up': moveSetlistItem(Number(el.dataset.index), -1); break;
       case 'setlist-down': moveSetlistItem(Number(el.dataset.index), 1); break;
@@ -829,8 +909,15 @@ function initDelegatedActions() {
     if (!form) return;
     e.preventDefault();
     const id = Number(form.dataset.id);
+    if (LibState.modal?.type === 'conti' && form.closest('#libModalBody') && document.getElementById('saveAllBar')) {
+      saveAllConti();
+      return;
+    }
     if (form.dataset.actionSubmit === 'save-song') saveSong(id, form);
     if (form.dataset.actionSubmit === 'save-conti') saveConti(id, form);
+  });
+  document.addEventListener('input', e => {
+    if (e.target.closest('#libModalBody form[data-action-submit]')) updateSaveAllBar();
   });
 }
 
