@@ -15,7 +15,7 @@
   <meta name="application-name" content="J&amp;I worship" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=2" />
   <link rel="icon" type="image/png" href="icons/icon-192.png?v=2" />
-  <link rel="stylesheet" href="css/style.css?v=25" />
+  <link rel="stylesheet" href="css/style.css?v=29" />
 </head>
 <body class="login-page">
   <main class="login-box">
@@ -54,6 +54,8 @@
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.detail || `오류 (${res.status})`);
+        // 들어간 화면에서 "OO님 어서 오세요" 한 번 띄우기
+        try { sessionStorage.setItem('jandi.welcome', data.name || (data.role === 'admin' ? '관리자' : '팀원')); } catch (e) {}
         location.replace(safeNext);
       } catch (ex) {
         err.textContent = ex.message;

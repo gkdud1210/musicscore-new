@@ -440,8 +440,8 @@ async function openPeopleEditor() {
   wrap.className = 'people-editor';
   wrap.innerHTML = '<div class="people-box"><p>불러오는 중...</p></div>';
   document.body.appendChild(wrap);
-  let people = [];
-  try { people = (await peopleApi('GET')).people || []; }
+  let people = [], teamCode = '';
+  try { const r = await peopleApi('GET'); people = r.people || []; teamCode = r.team_code || ''; }
   catch (e) { wrap.remove(); showToast('불러오기 실패: ' + e.message, 'error'); return; }
   const row = p => `<div class="people-row" data-id="${escapeHtml(p.id || '')}">
       <input type="text" class="lib-edit-title-input people-name" maxlength="20" placeholder="이름 (예: 베이스 하늘)" value="${escapeHtml(p.name || '')}" />
@@ -452,6 +452,8 @@ async function openPeopleEditor() {
     <h3>👥 사람별 입장코드</h3>
     <p class="people-sub">이 코드로 들어온 사람은 라이브에서 💬 메세지를 보낼 수 있고, 보낸 사람 이름이 같이 떠요.
       관리자 코드는 따로 그대로예요. 코드를 지우면 그 사람은 다시 로그인해야 해요.</p>
+    <label class="people-team">팀 공용 코드 <small>(이름 없이 들어오는 코드 · 메세지엔 "팀원"으로 떠요)</small>
+      <input type="text" class="lib-edit-title-input people-code" id="peopleTeamCode" maxlength="30" inputmode="numeric" value="${escapeHtml(teamCode)}" /></label>
     <div class="people-list" id="peopleList">${(people.length ? people : [{}]).map(row).join('')}</div>
     <div class="people-actions">
       <button type="button" class="btn-sm" data-people="add">＋ 사람 추가</button>
@@ -475,12 +477,28 @@ async function openPeopleEditor() {
         id: r.dataset.id, name: r.querySelector('.people-name').value, code: r.querySelector('.people-code').value,
       }));
       try {
-        await peopleApi('PUT', { people: list });
+        await peopleApi('PUT', { people: list, team_code: document.getElementById('peopleTeamCode').value });
         showToast('입장코드를 저장했어요.', 'success');
         wrap.remove();
       } catch (err) { showToast(err.message, 'error'); }
     }
   });
+}
+
+/** 로그인하고 처음 들어온 화면에 "OO님 어서 오세요" */
+function showWelcomeOnce() {
+  let who = '';
+  try { who = sessionStorage.getItem('jandi.welcome') || ''; sessionStorage.removeItem('jandi.welcome'); } catch { /* 없음 */ }
+  if (!who) return;
+  const el = document.createElement('div');
+  el.className = 'welcome-pop';
+  el.setAttribute('role', 'status');
+  el.innerHTML = `<span class="welcome-hi">👋</span><div><b>${escapeHtml(who)}님, 어서 오세요!</b>
+    <small>${AuthState.name ? '라이브 메세지에 이 이름이 같이 떠요' : '오늘도 함께 찬양해요'}</small></div>`;
+  el.addEventListener('click', () => el.remove());
+  document.body.appendChild(el);
+  setTimeout(() => el.classList.add('out'), 3200);
+  setTimeout(() => el.remove(), 3800);
 }
 
 function renderHeaderAccount() {
@@ -492,15 +510,16 @@ function renderHeaderAccount() {
   let html = '';
   if (AuthState.auth) {
     if (AuthState.hasAdmin && AuthState.role !== 'admin') {
-      html += `<a class="header-account-btn" href="login.html?admin=1&next=${encodeURIComponent(location.pathname + location.search)}">🔑 관리자</a>`;
+      html += `<a class="header-account-btn" href="login.html?admin=1&next=${encodeURIComponent(location.pathname + location.search)}" title="관리자로 들어가기">🔑<span class="ha-long"> 관리자</span></a>`;
     }
-    if (AuthState.role === 'admin' && AuthState.hasAdmin) html += `<span class="header-account-role">관리자</span>`;
-    else if (AuthState.name) html += `<span class="header-account-role person">🙋 ${escapeHtml(AuthState.name)}</span>`;
+    const who = AuthState.name || (AuthState.role === 'admin' && AuthState.hasAdmin ? '관리자' : '팀원');
+    html += `<span class="header-account-role${AuthState.name ? ' person' : ''}" title="지금 ${escapeHtml(who)}(으)로 들어와 있어요">🙋 ${escapeHtml(who)}</span>`;
     html += `<button type="button" class="header-account-btn" id="logoutBtn">로그아웃</button>`;
   }
   html += `<button type="button" class="header-account-btn theme-toggle-btn" id="themeToggleBtn"></button>`;
   box.innerHTML = html;
   header.appendChild(box);
+  showWelcomeOnce();
   initThemeToggle(document.getElementById('themeToggleBtn'));
   document.getElementById('logoutBtn')?.addEventListener('click', async () => {
     await fetch(`${API_BASE}/api/logout`, { method: 'POST' });
