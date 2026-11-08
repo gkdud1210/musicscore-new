@@ -805,6 +805,7 @@ function live_public(?array $live): ?array
     unset($live['owner']);
     $live['mine'] = $mine;
     $live['can_edit'] = $mine || can_edit(current_role());
+    $live['now_ms'] = (int)(microtime(true) * 1000);
     return $live;
 }
 
@@ -953,6 +954,42 @@ function api_live_focus(): array
         return $live;
     });
     return ['live' => live_public($live)];
+}
+
+/** 💬 라이브 메세지: 관리자가 보내면 라이브 보는 모두의 악보 위에 뜬다 (터치하면 사라짐) */
+function api_live_message(): array
+{
+    $text = trim(preg_replace('/\s+/u', ' ', (string)(body_json()['text'] ?? '')));
+    if ($text === '') throw new ApiError(400, '보낼 메세지가 없어요');
+    $text = mb_substr($text, 0, 80);
+    $live = live_update(function (?array $live) use ($text) {
+        $live = live_require_editor($live);
+        $live['message'] = ['text' => $text, 'ts' => (int)(microtime(true) * 1000)];
+        return $live;
+    });
+    return ['live' => live_public($live)];
+}
+
+const QUICK_MESSAGES_DEFAULT = ['드럼 좀 천천히 부탁해요 🥁', '조금 더 고조 업업 🔥', '템포 조금 빠르게 ⏩', '한 번 더 반복 🔁',
+                                '후렴으로 가요', '조용히 마무리해요 🙏'];
+
+function api_get_quick_messages(): array
+{
+    $v = state_get('quick_messages');
+    $list = $v !== null ? json_decode($v, true) : null;
+    return ['messages' => is_array($list) ? $list : QUICK_MESSAGES_DEFAULT];
+}
+
+function api_put_quick_messages(): array
+{
+    $list = [];
+    foreach ((array)(body_json()['messages'] ?? []) as $m) {
+        $m = trim(preg_replace('/\s+/u', ' ', (string)$m));
+        if ($m !== '' && !in_array($m, $list, true)) $list[] = mb_substr($m, 0, 40);
+        if (count($list) >= 16) break;
+    }
+    state_set('quick_messages', json_encode($list, JSON_UNESCAPED_UNICODE));
+    return ['messages' => $list];
 }
 
 function api_stop_live(): array

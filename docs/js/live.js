@@ -12,6 +12,7 @@ const LIVE_POLL_VIEWING_MS = 2500;   // 라이브 화면을 보는 중엔 더 �
 const LIVE_SEEN_KEY = 'scoreshift.live.seen';
 const LIVE_LEFT_KEY = 'jandi.live.left';
 const LIVE_FOCUS_KEY = 'jandi.live.focus';
+const LIVE_MSG_KEY = 'jandi.live.msg';
 
 const LiveState = { live: null, timer: null, viewerOpen: false, titleTimer: null, originalTitle: document.title };
 
@@ -67,6 +68,7 @@ function applyLive(live) {
     return;
   }
   if (watching) {
+    maybeShowLiveMessage(live);
     if (newFocus) {
       setFocusSeen(live);
       if (jumpToFocus(live)) showToast(`📣 지금: ${live.focus.title}`, 'info', 3000);
@@ -277,6 +279,7 @@ function openLiveViewer(local = null) {
   LiveState.viewerOpen = true;
   renderLiveIndicator();
   keepScreenOn(true);
+  if (!local) maybeShowLiveMessage(live, 60000);   // 들어오기 1분 안에 온 메세지만
   // 알림주기가 있었으면 그 콘티·곡에서 시작
   if (!local && live.focus && !same) {
     setFocusSeen(live);
@@ -296,7 +299,8 @@ function syncLiveViewer(live) {
   V.title = live.title;
   V.cur = Math.max(0, V.sets.findIndex(st => st.key === curKey));
   const added = live.sets.filter(st => !known.has(st.key));
-  const addBoxOpen = !document.getElementById('liveAdd')?.classList.contains('hidden');
+  const addBoxOpen = !document.getElementById('liveAdd')?.classList.contains('hidden')
+    || !document.getElementById('liveMsgPanel')?.classList.contains('hidden');
   if (!addBoxOpen) renderLiveSet(); else renderLiveTabs();
   added.forEach(st => showToast(`＋ 새 콘티: ${st.title}`, 'info', 3000));
 }
@@ -342,6 +346,7 @@ function renderLiveSet() {
       <span class="live-badge"><span class="live-dot"></span> ${V.local ? '보기' : 'LIVE'}</span>
       <div class="live-now" id="liveNow"></div>
       ${server && live.can_edit ? '<button type="button" class="live-top-btn notify" data-live="notify" title="지금 보고 있는 콘티·곡으로 모두의 화면을 넘겨요">📣 알림주기</button>' : ''}
+      ${server && live.can_edit ? '<button type="button" class="live-top-btn msg" data-live="msg" title="라이브 보는 모두의 악보 위에 메세지 띄우기">💬</button>' : ''}
       <button type="button" class="live-top-btn" data-live="fullscreen" title="전체 화면">⛶</button>
       ${!server ? '<button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>'
         : live.mine ? '<button type="button" class="live-top-btn" data-live="stop" title="라이브 끝내기 (모두)">■ 끝내기</button><button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>'
@@ -349,6 +354,7 @@ function renderLiveSet() {
     </div>
     <div class="live-sets" id="liveSets" role="tablist" aria-label="콘티"></div>
     <div class="live-add hidden" id="liveAdd"></div>
+    <div class="live-add live-msg-panel hidden" id="liveMsgPanel"></div>
     <div class="live-songs" id="liveSongs">
       ${set.songs.map((s, i) => `<button type="button" class="live-song-chip" data-live="jump" data-song="${i}">
         ${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</button>`).join('')}
@@ -435,6 +441,7 @@ function updateLiveNow() {
 }
 
 function closeLiveViewer() {
+  document.getElementById('liveMsg')?.remove();
   const v = document.getElementById('liveViewer');
   if (v) { v.classList.add('hidden'); v.innerHTML = ''; }
   LiveState.viewerOpen = false;
@@ -480,6 +487,7 @@ function filterContisByQuery(contis, q) {
 async function openLiveAdd() {
   const box = document.getElementById('liveAdd');
   if (!box) return;
+  document.getElementById('liveMsgPanel')?.classList.add('hidden');
   if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
   box.classList.remove('hidden');
   box.innerHTML = '<p class="live-add-empty">불러오는 중...</p>';
@@ -553,6 +561,108 @@ async function liveSetFromSongIds(ids, title) {
   return { title, songs: songs.filter(Boolean).map(s => ({ id: s.id, title: s.title, key: s.key, image_urls: s.image_urls })) };
 }
 
+/* ── 💬 라이브 메세지 (관리자 → 라이브 보는 모두의 악보 위에, 터치하면 사라짐) ───── */
+function msgSeenTs(live) {
+  const [id, ts] = lsGet(LIVE_MSG_KEY).split(':');
+  return live && id === String(live.id) ? Number(ts) || 0 : 0;
+}
+function setMsgSeen(live) {
+  if (live?.message) lsSet(LIVE_MSG_KEY, `${live.id}:${live.message.ts}`);
+}
+
+/** 새 메세지면 띄운다. maxAge(ms) 를 주면 그보다 오래된 메세지는 띄우지 않고 본 것으로 */
+function maybeShowLiveMessage(live, maxAge = 0) {
+  const m = live?.message;
+  if (!m || m.ts <= msgSeenTs(live)) return;
+  setMsgSeen(live);
+  if (maxAge && live.now_ms && live.now_ms - m.ts > maxAge) return;
+  if (LiveState.sentMsgTs === m.ts) return;   // 내가 보낸 건 나한테는 안 띄움
+  showLiveMessage(m.text);
+}
+
+function showLiveMessage(text) {
+  document.getElementById('liveMsg')?.remove();
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.id = 'liveMsg';
+  el.className = 'live-msg';
+  el.innerHTML = `<span class="live-msg-text">${escapeHtml(text)}</span><span class="live-msg-hint">터치하면 사라져요</span>`;
+  el.addEventListener('click', () => el.remove());
+  // 전체 화면이면 그 안에 붙여야 보인다
+  (document.fullscreenElement || document.body).appendChild(el);
+  try { navigator.vibrate?.([120, 60, 120]); } catch { /* 진동 없음 */ }
+}
+
+async function sendLiveMessage(text) {
+  text = String(text || '').trim();
+  if (!text) return;
+  try {
+    const { live } = await apiJson('/api/live/message', jsonBody('POST', { text }));
+    LiveState.sentMsgTs = live.message.ts;
+    setMsgSeen(live);
+    document.getElementById('liveMsgPanel')?.classList.add('hidden');
+    applyLive(live);
+    showToast(`💬 보냈어요: ${text}`, 'success', 2000);
+  } catch (e) {
+    showToast('메세지 보내기 실패: ' + e.message, 'error');
+  }
+}
+
+async function loadQuickMessages() {
+  try { LiveState.quick = (await apiJson('/api/quick-messages')).messages || []; }
+  catch { LiveState.quick = LiveState.quick || []; }
+  return LiveState.quick;
+}
+
+async function openLiveMsgPanel(edit = false) {
+  const box = document.getElementById('liveMsgPanel');
+  if (!box) return;
+  if (!edit && !box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+  document.getElementById('liveAdd')?.classList.add('hidden');
+  box.classList.remove('hidden');
+  const list = LiveState.quick || await loadQuickMessages();
+  if (edit) {
+    box.innerHTML = `
+      <p class="live-add-note">✏️ 퀵 메세지 편집 · 팀 관리자 모두 같이 써요</p>
+      <div class="live-quick-edit" id="liveQuickEdit">
+        ${list.map(m => `<div class="live-quick-row"><input type="text" class="live-add-search" maxlength="40" value="${escapeHtml(m)}" />
+          <button type="button" class="live-top-btn" data-live="quick-del" aria-label="빼기">✕</button></div>`).join('')}
+      </div>
+      <div class="live-msg-actions">
+        <button type="button" class="live-top-btn" data-live="quick-add">＋ 추가</button>
+        <button type="button" class="live-top-btn" data-live="msg-panel">취소</button>
+        <button type="button" class="live-top-btn notify" data-live="quick-save">저장</button>
+      </div>`;
+    return;
+  }
+  box.innerHTML = `
+    <p class="live-add-note">💬 누르면 바로 라이브 보는 모두의 악보 위에 떠요</p>
+    <div class="live-quick">
+      ${list.map(m => `<button type="button" class="live-quick-chip" data-live="send-msg" data-text="${escapeHtml(m)}">${escapeHtml(m)}</button>`).join('')}
+    </div>
+    <form class="live-msg-form" id="liveMsgForm">
+      <input type="text" class="live-add-search" id="liveMsgInput" maxlength="80" placeholder="직접 쓰기 (예: 2절 건너뛰어요)" />
+      <button type="submit" class="live-top-btn notify">보내기</button>
+    </form>
+    <button type="button" class="live-quick-editbtn" data-live="quick-edit">✏️ 퀵 메세지 편집</button>`;
+  document.getElementById('liveMsgForm').addEventListener('submit', e => {
+    e.preventDefault();
+    sendLiveMessage(document.getElementById('liveMsgInput').value);
+  });
+}
+
+async function saveQuickMessages() {
+  const messages = [...document.querySelectorAll('#liveQuickEdit input')].map(i => i.value.trim()).filter(Boolean);
+  try {
+    LiveState.quick = (await apiJson('/api/quick-messages', jsonBody('PUT', { messages }))).messages;
+    showToast('퀵 메세지를 저장했어요.', 'success');
+    document.getElementById('liveMsgPanel')?.classList.add('hidden');
+    openLiveMsgPanel(false);
+  } catch (e) {
+    showToast('저장 실패: ' + e.message, 'error');
+  }
+}
+
 /* ── 이벤트 ─────────────────────────────────────────────── */
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-live]');
@@ -566,6 +676,20 @@ document.addEventListener('click', e => {
     }
     case 'open': openLiveViewer(); break;
     case 'leave': leaveLive(); break;
+    case 'msg': openLiveMsgPanel(); break;
+    case 'msg-panel': document.getElementById('liveMsgPanel')?.classList.add('hidden'); openLiveMsgPanel(); break;
+    case 'send-msg': sendLiveMessage(el.dataset.text); break;
+    case 'quick-edit': openLiveMsgPanel(true); break;
+    case 'quick-del': el.closest('.live-quick-row')?.remove(); break;
+    case 'quick-add': {
+      const row = document.createElement('div');
+      row.className = 'live-quick-row';
+      row.innerHTML = '<input type="text" class="live-add-search" maxlength="40" placeholder="새 퀵 메세지" /><button type="button" class="live-top-btn" data-live="quick-del" aria-label="빼기">✕</button>';
+      document.getElementById('liveQuickEdit')?.appendChild(row);
+      row.querySelector('input').focus();
+      break;
+    }
+    case 'quick-save': saveQuickMessages(); break;
     case 'notify': notifyLive(); break;
     case 'dismiss':
       if (LiveState.live) { setLiveSeen(LiveState.live.id); setFocusSeen(LiveState.live); }
@@ -607,7 +731,10 @@ document.addEventListener('keydown', e => {
   if (e.key === 'ArrowDown') { e.preventDefault(); switchLiveSet((LiveState.viewing?.cur ?? 0) + 1, 'first'); }
   if (e.key === 'ArrowUp') { e.preventDefault(); switchLiveSet((LiveState.viewing?.cur ?? 0) - 1, 'first'); }
   if (/^[1-9]$/.test(e.key)) switchLiveSet(Number(e.key) - 1);
-  if (e.key === 'Escape') closeLiveViewer();
+  if (e.key === 'Escape') {
+    if (document.getElementById('liveMsg')) { document.getElementById('liveMsg').remove(); return; }
+    closeLiveViewer();
+  }
 });
 
 window.addEventListener('resize', () => {
