@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # 카페24에 올린 꾸러미(data/import.json + 그림)를 DB에 넣고, 같은 악보 찾기용 지문을 만든다. (처음 한 번)
-#   bash cafe24/tools/import.sh https://jandi.cafe24.com
+#   bash cafe24/tools/import.sh   (주소는 cafe24/.secrets 의 SITE_URL)
 set -euo pipefail
-SITE="${1:-}"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+if [ -f "$ROOT/cafe24/.secrets" ]; then set -a; . "$ROOT/cafe24/.secrets"; set +a; fi
+SITE="${1:-${SITE_URL:-}}"
 [ -n "$SITE" ] || read -r -p "사이트 주소 (예: https://jandi.cafe24.com): " SITE
 SITE="${SITE%/}"
-read -r -s -p "관리자 비밀번호: " PW; echo
+# 관리자 비밀번호: 맥 서버와 같은 것 (없으면 물어봄)
+PW="$(grep -E '^ADMIN_PASSWORD=' "$HOME/ChanyangServer/backend/.env" 2>/dev/null | cut -d= -f2- || true)"
+[ -n "$PW" ] || { read -r -s -p "관리자 비밀번호: " PW; echo; }
 JAR="$(mktemp)"
 trap 'rm -f "$JAR"' EXIT
 body=$(python3 -c 'import json,sys; print(json.dumps({"password": sys.argv[1]}))' "$PW")

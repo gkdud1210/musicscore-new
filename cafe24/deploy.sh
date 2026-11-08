@@ -4,21 +4,24 @@
 #   bash cafe24/deploy.sh                 ← 앱 코드(화면 + PHP)
 #   bash cafe24/deploy.sh <폴더>/data     ← 맥에서 옮길 꾸러미(tools/export_from_mac.py 결과)를 www/data/ 로
 #
-# FTP 정보는 처음 한 번 물어보고 cafe24/.ftp 에 저장해요 (비밀번호는 저장 안 함 — 매번 입력).
-# config.php 는 올리지 않아요 → 처음에 한 번만 직접 올리기: bash cafe24/deploy.sh --config <config.php 경로>
+# 접속 정보는 cafe24/.secrets 에서 읽어요 (없으면 물어봐요).
+# config.php 는 따로: bash cafe24/deploy.sh --config  (cafe24/www/config.php 를 올림)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STATE="$ROOT/cafe24/.ftp"
 
-if [ -f "$STATE" ]; then . "$STATE"; fi
+# 접속 정보: cafe24/.secrets (있으면 묻지 않고 그대로 씀) → 없으면 물어봄
+SECRETS="$ROOT/cafe24/.secrets"
+if [ -f "$SECRETS" ]; then set -a; . "$SECRETS"; set +a; fi
+if [ -f "$STATE" ] && [ -z "${FTP_HOST:-}" ]; then . "$STATE"; fi
 if [ -z "${FTP_HOST:-}" ]; then
   read -r -p "FTP 주소 (예: jandi.cafe24.com): " FTP_HOST
   read -r -p "FTP 아이디: " FTP_USER
   read -r -p "올릴 폴더 (보통 www — 모르면 그냥 엔터): " FTP_DIR
-  FTP_DIR="${FTP_DIR:-www}"
-  printf 'FTP_HOST=%q\nFTP_USER=%q\nFTP_DIR=%q\n' "$FTP_HOST" "$FTP_USER" "$FTP_DIR" > "$STATE"
+  printf 'FTP_HOST=%q\nFTP_USER=%q\nFTP_DIR=%q\n' "$FTP_HOST" "$FTP_USER" "${FTP_DIR:-www}" > "$STATE"
 fi
-read -r -s -p "FTP 비밀번호: " FTP_PASS; echo
+FTP_DIR="${FTP_DIR:-www}"
+if [ -z "${FTP_PASS:-}" ]; then read -r -s -p "FTP 비밀번호: " FTP_PASS; echo; fi
 
 put() {  # put <로컬 파일> <원격 경로(FTP_DIR 기준)>
   curl -sS --fail --ftp-create-dirs --ftp-pasv --retry 2 \
@@ -48,9 +51,16 @@ upload_tree() {  # upload_tree <로컬 폴더> <원격 하위 경로> <바뀐 �
 }
 
 case "${1:-}" in
+  --check)
+    echo "FTP 접속 확인: ftp://$FTP_HOST/ (아이디 $FTP_USER)"
+    curl -sS --fail --ftp-pasv --user "$FTP_USER:$FTP_PASS" "ftp://$FTP_HOST/" | head -20
+    echo "--- $FTP_DIR 폴더:"
+    curl -sS --fail --ftp-pasv --user "$FTP_USER:$FTP_PASS" "ftp://$FTP_HOST/$FTP_DIR/" | head -20
+    ;;
   --config)
-    [ -f "${2:-}" ] || { echo "config.php 경로를 적어주세요"; exit 1; }
-    put "$2" "config.php" && echo "✅ config.php 올림"
+    CFG="${2:-$ROOT/cafe24/www/config.php}"
+    [ -f "$CFG" ] || { echo "config.php 가 없어요 — 먼저 python3 cafe24/tools/make_config.py"; exit 1; }
+    put "$CFG" "config.php" && echo "✅ config.php 올림"
     ;;
   "")
     BUILD="$ROOT/cafe24/build"

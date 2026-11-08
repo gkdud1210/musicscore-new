@@ -28,3 +28,4 @@ cafe24/www/data/*
 !cafe24/www/data/.htaccess
 cafe24/.ftp
 cafe24/.deploy-*
+cafe24/.secrets
