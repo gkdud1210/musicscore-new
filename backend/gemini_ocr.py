@@ -29,7 +29,11 @@ logger = logging.getLogger("scoreshift.gemini_ocr")
 DEFAULT_MODEL = "gemini-flash-latest"
 API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 MAX_IMAGE_EDGE = 1600
-PARALLEL_PAGES = 2          # 무료 사용량은 1분에 보낼 수 있는 횟수가 적어서 조금씩
+PARALLEL_PAGES = 3          # 무료 사용량은 1분에 보낼 수 있는 횟수가 적어서 조금씩
+# 생각(thinking)을 적게 해야 빠르다: 기본 모델로 한 쪽 37초 → 17초, 결과는 같았음 (2026-11-08)
+# 이 설정을 모르는 모델이면 400 이 오므로 그때는 빼고 다시 보낸다
+THINKING_LEVEL = os.getenv("GEMINI_THINKING", "low").strip()
+_thinking_ok = {"value": bool(THINKING_LEVEL)}
 MAX_TRIES = 6
 TIMEOUT_SECONDS = 120
 
@@ -75,16 +79,19 @@ def _page_jpeg_b64(doc, page_index: int) -> str:
 
 
 def _call(image_b64: str, page_index: int, page_count: int) -> dict:
+    gen = {
+        "temperature": 0,
+        "responseMimeType": "application/json",
+        "responseSchema": RESPONSE_SCHEMA,
+    }
+    if _thinking_ok["value"]:
+        gen["thinkingConfig"] = {"thinkingLevel": THINKING_LEVEL}
     body = json.dumps({
         "contents": [{"role": "user", "parts": [
             {"inline_data": {"mime_type": "image/jpeg", "data": image_b64}},
             {"text": f"{PROMPT}\n\nThis is page {page_index + 1} of {page_count}."},
         ]}],
-        "generationConfig": {
-            "temperature": 0,
-            "responseMimeType": "application/json",
-            "responseSchema": RESPONSE_SCHEMA,
-        },
+        "generationConfig": gen,
     }).encode("utf-8")
     req = urllib.request.Request(
         API_URL.format(model=_model()), data=body, method="POST",
@@ -98,6 +105,10 @@ def _call(image_b64: str, page_index: int, page_count: int) -> dict:
             break
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace")[:300]
+            if e.code == 400 and "thinking" in detail.lower() and _thinking_ok["value"]:
+                logger.info(f"이 모델은 thinkingLevel={THINKING_LEVEL} 을 못 씀 → 빼고 다시")
+                _thinking_ok["value"] = False
+                return _call(image_b64, page_index, page_count)
             if e.code in (401, 403) or (e.code == 400 and "API key" in detail):
                 raise RuntimeError("제미나이 API 키가 올바르지 않거나 권한이 없어요 (GEMINI_API_KEY 확인)") from e
             if e.code == 404:
