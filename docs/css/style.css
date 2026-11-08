@@ -2055,3 +2055,4 @@ form.dirty .lib-edit-title-input { border-color: #f59e0b; background: rgba(245,1
   .visitor-badge .vb-long { display: none; }
   .header-account-role { display: none; }
 }
+.install-guide-box .install-later { width: 100%; margin-top: 8px; padding: 10px; }

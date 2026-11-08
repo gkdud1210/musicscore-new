@@ -312,7 +312,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // 새 콘티를 라이브러리에 저장하기는 카페24 서버에만 있다
   if (AuthState.server !== 'php') document.getElementById('setlistSaveBtn')?.remove();
   renderHeaderAccount();
-  initInstallButton();
+  showInstallGuideOnce();
   startPresence();
 });
 
@@ -404,7 +404,7 @@ function renderHeaderAccount() {
   const box = document.createElement('div');
   box.id = 'headerAccount';
   box.className = 'header-account';
-  let html = `<button type="button" class="header-account-btn hidden" id="installBtn">📲 홈 화면에 추가</button>`;
+  let html = '';
   if (AuthState.auth) {
     if (AuthState.hasAdmin && AuthState.role !== 'admin') {
       html += `<a class="header-account-btn" href="login.html?admin=1&next=${encodeURIComponent(location.pathname + location.search)}">🔑 관리자</a>`;
@@ -425,10 +425,9 @@ function renderHeaderAccount() {
    ============================================================ */
 let deferredInstallPrompt = null;
 window.addEventListener('beforeinstallprompt', e => {
-  // 안드로이드 크롬: 설치 프롬프트를 잡아뒀다가 버튼으로 띄운다
+  // 안드로이드 크롬: 설치 창을 잡아뒀다가 안내 창의 버튼으로 띄운다
   e.preventDefault();
   deferredInstallPrompt = e;
-  document.getElementById('installBtn')?.classList.remove('hidden');
 });
 
 function isStandaloneApp() {
@@ -440,20 +439,15 @@ function isIOS() {
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPadOS는 맥으로 표시됨
 }
 
-function initInstallButton() {
-  const btn = document.getElementById('installBtn');
-  if (!btn || isStandaloneApp()) return;
-  if (isIOS() || deferredInstallPrompt) btn.classList.remove('hidden');
-  btn.addEventListener('click', async () => {
-    if (deferredInstallPrompt) {
-      deferredInstallPrompt.prompt();
-      await deferredInstallPrompt.userChoice.catch(() => null);
-      deferredInstallPrompt = null;
-      btn.classList.add('hidden');
-      return;
-    }
-    showInstallGuide();
-  });
+/** 휴대폰·태블릿에서 이 기기로 처음 들어왔을 때 한 번만 "홈 화면에 추가" 안내 창 */
+function showInstallGuideOnce() {
+  if (isStandaloneApp() || !(isIOS() || /android/i.test(navigator.userAgent))) return;
+  const KEY = 'jandi_install_guide_shown';
+  try {
+    if (localStorage.getItem(KEY)) return;
+    localStorage.setItem(KEY, '1');
+  } catch { return; }   // 기억할 수 없는 환경이면 매번 뜨지 않게 아예 안 띄운다
+  setTimeout(showInstallGuide, 1500);   // 안드로이드 설치 창 준비를 잠깐 기다림
 }
 
 function showInstallGuide() {
@@ -475,9 +469,16 @@ function showInstallGuide() {
           <li><b>"홈 화면에 추가"</b> 또는 <b>"앱 설치"</b>를 누르세요</li>
         </ol>`}
       <p>앱처럼 아이콘을 눌러서 바로 열 수 있어요. 처음 한 번만 비밀번호를 입력하면 돼요.</p>
-      <button type="button" class="btn-primary">알겠어요</button>
+      ${deferredInstallPrompt ? '<button type="button" class="btn-primary" data-install="now">📲 지금 홈 화면에 추가</button><button type="button" class="btn-sm install-later">나중에</button>' : '<button type="button" class="btn-primary">알겠어요</button>'}
     </div>`;
-  overlay.addEventListener('click', e => {
+  overlay.addEventListener('click', async e => {
+    if (e.target.dataset?.install === 'now' && deferredInstallPrompt) {
+      overlay.remove();
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice.catch(() => null);
+      deferredInstallPrompt = null;
+      return;
+    }
     if (e.target === overlay || e.target.tagName === 'BUTTON') overlay.remove();
   });
   document.body.appendChild(overlay);
