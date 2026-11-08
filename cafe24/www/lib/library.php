@@ -805,7 +805,15 @@ function live_public(?array $live): ?array
     unset($live['owner']);
     $live['mine'] = $mine;
     $live['can_edit'] = $mine || can_edit(current_role());
+    $live['can_msg'] = $live['can_edit'] || can_message();
     $live['now_ms'] = (int)(microtime(true) * 1000);
+    // 받는 사람을 고른 메세지는 그 사람(과 보낸 사람)에게만
+    $m = $live['message'] ?? null;
+    if (is_array($m)) {
+        $me = recipient_key();
+        if (is_array($m['to'] ?? null) && $me !== ($m['from_key'] ?? '') && !in_array($me, $m['to'], true)) unset($live['message']);
+        else unset($live['message']['from_key']);
+    }
     return $live;
 }
 
@@ -962,9 +970,15 @@ function api_live_message(): array
     $text = trim(preg_replace('/\s+/u', ' ', (string)(body_json()['text'] ?? '')));
     if ($text === '') throw new ApiError(400, '보낼 메세지가 없어요');
     $text = mb_substr($text, 0, 80);
-    $live = live_update(function (?array $live) use ($text) {
-        $live = live_require_editor($live);
-        $live['message'] = ['text' => $text, 'ts' => (int)(microtime(true) * 1000)];
+    $from = sender_name();
+    $to = body_json()['to'] ?? null;
+    $to = is_array($to) ? array_values(array_unique(array_filter(array_map('strval', $to), fn($k) => preg_match('/^(admin|team|[a-f0-9]{8})$/', $k)))) : null;
+    if ($to === []) throw new ApiError(400, '받는 사람을 한 명 이상 골라주세요');
+    $fromKey = recipient_key();
+    $live = live_update(function (?array $live) use ($text, $from, $to, $fromKey) {
+        if (!$live) throw new ApiError(404, '지금 진행 중인 라이브가 없어요');
+        if (!live_is_owner($live) && !can_message()) throw new ApiError(403, '메세지는 관리자나 자기 입장코드로 들어온 사람만 보낼 수 있어요');
+        $live['message'] = ['text' => $text, 'from' => $from, 'from_key' => $fromKey, 'to' => $to, 'ts' => (int)(microtime(true) * 1000)];
         return $live;
     });
     return ['live' => live_public($live)];

@@ -346,7 +346,7 @@ function renderLiveSet() {
       <span class="live-badge"><span class="live-dot"></span> ${V.local ? '보기' : 'LIVE'}</span>
       <div class="live-now" id="liveNow"></div>
       ${server && live.can_edit ? '<button type="button" class="live-top-btn notify" data-live="notify" title="지금 보고 있는 콘티·곡으로 모두의 화면을 넘겨요">📣 알림주기</button>' : ''}
-      ${server && live.can_edit ? '<button type="button" class="live-top-btn msg" data-live="msg" title="라이브 보는 모두의 악보 위에 메세지 띄우기">💬</button>' : ''}
+      ${server && (live.can_edit || live.can_msg) ? '<button type="button" class="live-top-btn msg" data-live="msg" title="라이브 보는 모두의 악보 위에 메세지 띄우기">💬 메세지</button>' : ''}
       <button type="button" class="live-top-btn" data-live="fullscreen" title="전체 화면">⛶</button>
       ${!server ? '<button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>'
         : live.mine ? '<button type="button" class="live-top-btn" data-live="stop" title="라이브 끝내기 (모두)">■ 끝내기</button><button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>'
@@ -577,16 +577,16 @@ function maybeShowLiveMessage(live, maxAge = 0) {
   setMsgSeen(live);
   if (maxAge && live.now_ms && live.now_ms - m.ts > maxAge) return;
   if (LiveState.sentMsgTs === m.ts) return;   // 내가 보낸 건 나한테는 안 띄움
-  showLiveMessage(m.text);
+  showLiveMessage(m.text, m.from);
 }
 
-function showLiveMessage(text) {
+function showLiveMessage(text, from = '') {
   document.getElementById('liveMsg')?.remove();
   const el = document.createElement('button');
   el.type = 'button';
   el.id = 'liveMsg';
   el.className = 'live-msg';
-  el.innerHTML = `<span class="live-msg-text">${escapeHtml(text)}</span><span class="live-msg-hint">터치하면 사라져요</span>`;
+  el.innerHTML = `${from ? `<span class="live-msg-from">💬 ${escapeHtml(from)}</span>` : ''}<span class="live-msg-text">${escapeHtml(text)}</span><span class="live-msg-hint">터치하면 사라져요</span>`;
   el.addEventListener('click', () => el.remove());
   // 전체 화면이면 그 안에 붙여야 보인다
   (document.fullscreenElement || document.body).appendChild(el);
@@ -597,12 +597,15 @@ async function sendLiveMessage(text) {
   text = String(text || '').trim();
   if (!text) return;
   try {
-    const { live } = await apiJson('/api/live/message', jsonBody('POST', { text }));
+    const to = msgTargets();
+    if (to && !to.length) { showToast('받는 사람을 한 명 이상 골라주세요.', 'info'); return; }
+    const { live } = await apiJson('/api/live/message', jsonBody('POST', { text, to }));
     LiveState.sentMsgTs = live.message.ts;
     setMsgSeen(live);
     document.getElementById('liveMsgPanel')?.classList.add('hidden');
     applyLive(live);
-    showToast(`💬 보냈어요: ${text}`, 'success', 2000);
+    const names = to ? LiveState.recipients.filter(x => to.includes(x.key)).map(x => x.name).join(', ') : '';
+    showToast(`💬 보냈어요${names ? ` (${names}에게만)` : ''}: ${text}`, 'success', 2500);
   } catch (e) {
     showToast('메세지 보내기 실패: ' + e.message, 'error');
   }
@@ -655,11 +658,14 @@ async function openLiveMsgPanel(edit = false) {
       </div>`;
     return;
   }
+  await loadRecipients();
+  const me = typeof AuthState !== 'undefined' && AuthState.name ? AuthState.name : (LiveState.live?.can_edit ? '관리자' : '');
   box.innerHTML = `
-    <p class="live-add-note">⚡ 누르면 바로 라이브 보는 모두의 악보 위에 떠요</p>
+    <p class="live-add-note">⚡ 누르면 바로 라이브 보는 모두의 악보 위에 떠요${me ? ` · 보낸 사람: <b>${escapeHtml(me)}</b>` : ''}</p>
     <div class="live-quick">
       ${list.map(m => `<button type="button" class="live-quick-chip" data-live="send-msg" data-text="${escapeHtml(m)}">${escapeHtml(m)}</button>`).join('')}
     </div>
+    <div class="live-to" id="liveTo">${recipientChips()}</div>
     <p class="live-add-note">🧩 단어를 눌러 문장을 만들고 <b>보내기</b></p>
     <div class="live-words">${wordChips(words.who)}</div>
     <div class="live-words what">${wordChips(words.what)}</div>
@@ -668,11 +674,49 @@ async function openLiveMsgPanel(edit = false) {
       <button type="button" class="live-top-btn" data-live="word-back" title="마지막 단어 지우기" aria-label="마지막 단어 지우기">⌫</button>
       <button type="submit" class="live-top-btn notify">보내기</button>
     </form>
-    <button type="button" class="live-quick-editbtn" data-live="quick-edit">✏️ 퀵 메세지·단어 편집</button>`;
+    ${LiveState.live?.can_edit ? '<button type="button" class="live-quick-editbtn" data-live="quick-edit">✏️ 퀵 메세지·단어 편집</button>' : ''}`;
   document.getElementById('liveMsgForm').addEventListener('submit', e => {
     e.preventDefault();
     sendLiveMessage(document.getElementById('liveMsgInput').value);
   });
+}
+
+/* ── 받는 사람 고르기 (기본은 전체, 눌러서 빼거나 한 사람만) ── */
+async function loadRecipients() {
+  if (LiveState.recipients) return;
+  try {
+    const r = await apiJson('/api/live/recipients');
+    LiveState.recipients = r.recipients.filter(x => x.key !== r.me);   // 나는 빼고
+  } catch { LiveState.recipients = []; }
+  LiveState.msgTo = new Set(LiveState.recipients.map(x => x.key));
+}
+
+function recipientChips() {
+  const list = LiveState.recipients || [];
+  if (!list.length) return '';
+  const to = LiveState.msgTo;
+  const all = to.size === list.length;
+  return `<span class="live-to-label">받는 사람</span>
+    <button type="button" class="live-to-chip all${all ? ' on' : ''}" data-live="to-all">${all ? '✓ ' : ''}전체</button>
+    ${list.map(x => `<button type="button" class="live-to-chip${to.has(x.key) ? ' on' : ''}" data-live="to-toggle" data-key="${escapeHtml(x.key)}"
+      aria-pressed="${to.has(x.key)}">${to.has(x.key) ? '✓ ' : ''}${escapeHtml(x.name)}</button>`).join('')}
+    <span class="live-to-sum">${all ? '모두에게 보여요' : to.size ? `${to.size}명에게만 보여요` : '받는 사람을 골라주세요'}</span>`;
+}
+
+function toggleRecipient(key, all = false) {
+  const list = LiveState.recipients || [];
+  if (all) LiveState.msgTo = LiveState.msgTo.size === list.length ? new Set() : new Set(list.map(x => x.key));
+  else if (LiveState.msgTo.has(key)) LiveState.msgTo.delete(key);
+  else LiveState.msgTo.add(key);
+  const box = document.getElementById('liveTo');
+  if (box) box.innerHTML = recipientChips();
+}
+
+/** 보낼 대상: 전체면 null, 아니면 고른 사람들 (나 자신은 화면에 안 떠도 받는 것으로) */
+function msgTargets() {
+  const list = LiveState.recipients || [];
+  if (!list.length || LiveState.msgTo.size === list.length) return null;
+  return [...LiveState.msgTo];
 }
 
 function addMsgWord(word) {
@@ -726,6 +770,8 @@ document.addEventListener('click', e => {
     case 'msg-panel': document.getElementById('liveMsgPanel')?.classList.add('hidden'); openLiveMsgPanel(); break;
     case 'send-msg': sendLiveMessage(el.dataset.text); break;
     case 'add-word': addMsgWord(el.dataset.text); break;
+    case 'to-all': toggleRecipient(null, true); break;
+    case 'to-toggle': toggleRecipient(el.dataset.key); break;
     case 'word-back': removeMsgWord(); break;
     case 'quick-edit': openLiveMsgPanel(true); break;
     case 'quick-del': el.closest('.live-quick-row')?.remove(); break;

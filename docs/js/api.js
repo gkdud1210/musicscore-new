@@ -294,6 +294,7 @@ AuthState.ready = (async () => {
       const me = await res.json();
       AuthState.auth = me.auth;
       AuthState.role = me.role;
+      AuthState.name = me.name || '';
       AuthState.canEdit = !!me.can_edit;
       AuthState.hasAdmin = !!me.has_admin;
       AuthState.server = me.server || 'python';
@@ -374,8 +375,12 @@ function initVisitorBadge() {
         return `<div class="visitor-day"><span class="visitor-bar" style="height:${Math.max(2, Math.round(d.count / max * 56))}px"></span>
           <b>${d.count}</b><small>${dt.getMonth() + 1}/${dt.getDate()} ${wd[dt.getDay()]}</small></div>`;
       }).join('')}</div>
-      <p class="visitor-note">같은 기기는 하루 한 번만 세요. "지금"은 최근 2~3분 안에 화면을 보고 있던 기기예요.</p>`;
+      <p class="visitor-note">같은 기기는 하루 한 번만 세요. "지금"은 최근 2~3분 안에 화면을 보고 있던 기기예요.</p>
+      <button type="button" class="btn-sm visitor-people-btn" data-people-open>👥 사람별 입장코드 관리</button>`;
   };
+  panel.addEventListener('click', e => {
+    if (e.target.closest('[data-people-open]')) { panel.classList.add('hidden'); openPeopleEditor(); }
+  });
   const load = async () => {
     try {
       const res = await fetch(`${API_BASE}/api/visitors`);
@@ -419,6 +424,65 @@ function initThemeToggle(btn) {
   btn.addEventListener('click', () => setTheme(currentTheme() === 'light' ? 'dark' : 'light'));
 }
 
+/* ── 사람별 입장코드 (관리자) — 그 코드로 들어오면 라이브 메세지에 이름이 붙어요 ── */
+async function peopleApi(method, data) {
+  const res = await fetch(`${API_BASE}/api/people`, data
+    ? { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : { method });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(j.detail || `HTTP ${res.status}`);
+  return j;
+}
+
+async function openPeopleEditor() {
+  document.getElementById('peopleEditor')?.remove();
+  const wrap = document.createElement('div');
+  wrap.id = 'peopleEditor';
+  wrap.className = 'people-editor';
+  wrap.innerHTML = '<div class="people-box"><p>불러오는 중...</p></div>';
+  document.body.appendChild(wrap);
+  let people = [];
+  try { people = (await peopleApi('GET')).people || []; }
+  catch (e) { wrap.remove(); showToast('불러오기 실패: ' + e.message, 'error'); return; }
+  const row = p => `<div class="people-row" data-id="${escapeHtml(p.id || '')}">
+      <input type="text" class="lib-edit-title-input people-name" maxlength="20" placeholder="이름 (예: 베이스 하늘)" value="${escapeHtml(p.name || '')}" />
+      <input type="text" class="lib-edit-title-input people-code" maxlength="30" inputmode="numeric" placeholder="입장코드" value="${escapeHtml(p.code || '')}" />
+      <button type="button" class="btn-sm" data-people="del" aria-label="빼기">✕</button>
+    </div>`;
+  wrap.innerHTML = `<div class="people-box" role="dialog" aria-modal="true" aria-label="사람별 입장코드">
+    <h3>👥 사람별 입장코드</h3>
+    <p class="people-sub">이 코드로 들어온 사람은 라이브에서 💬 메세지를 보낼 수 있고, 보낸 사람 이름이 같이 떠요.
+      관리자 코드는 따로 그대로예요. 코드를 지우면 그 사람은 다시 로그인해야 해요.</p>
+    <div class="people-list" id="peopleList">${(people.length ? people : [{}]).map(row).join('')}</div>
+    <div class="people-actions">
+      <button type="button" class="btn-sm" data-people="add">＋ 사람 추가</button>
+      <span style="flex:1"></span>
+      <button type="button" class="btn-sm" data-people="close">닫기</button>
+      <button type="button" class="btn-primary btn-compact" data-people="save">저장</button>
+    </div>
+  </div>`;
+  wrap.addEventListener('click', async e => {
+    const b = e.target.closest('[data-people]');
+    if (!b) { if (e.target === wrap) wrap.remove(); return; }
+    const act = b.dataset.people;
+    if (act === 'del') b.closest('.people-row').remove();
+    if (act === 'add') {
+      document.getElementById('peopleList').insertAdjacentHTML('beforeend', row({}));
+      document.querySelector('#peopleList .people-row:last-child .people-name').focus();
+    }
+    if (act === 'close') wrap.remove();
+    if (act === 'save') {
+      const list = [...wrap.querySelectorAll('.people-row')].map(r => ({
+        id: r.dataset.id, name: r.querySelector('.people-name').value, code: r.querySelector('.people-code').value,
+      }));
+      try {
+        await peopleApi('PUT', { people: list });
+        showToast('입장코드를 저장했어요.', 'success');
+        wrap.remove();
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+  });
+}
+
 function renderHeaderAccount() {
   const header = document.querySelector('.header-inner');
   if (!header || document.getElementById('headerAccount')) return;
@@ -431,6 +495,7 @@ function renderHeaderAccount() {
       html += `<a class="header-account-btn" href="login.html?admin=1&next=${encodeURIComponent(location.pathname + location.search)}">🔑 관리자</a>`;
     }
     if (AuthState.role === 'admin' && AuthState.hasAdmin) html += `<span class="header-account-role">관리자</span>`;
+    else if (AuthState.name) html += `<span class="header-account-role person">🙋 ${escapeHtml(AuthState.name)}</span>`;
     html += `<button type="button" class="header-account-btn" id="logoutBtn">로그아웃</button>`;
   }
   html += `<button type="button" class="header-account-btn theme-toggle-btn" id="themeToggleBtn"></button>`;

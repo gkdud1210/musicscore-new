@@ -18,23 +18,58 @@ function auth_secret(): string
 
 function sign_payload(string $payload): string { return hash_hmac('sha256', $payload, auth_secret()); }
 
-function make_token(string $role): string
+function make_token(string $role, string $pid = ''): string
 {
-    $payload = $role . '.' . (time() + SESSION_DAYS * 86400);
+    $payload = $role . '.' . (time() + SESSION_DAYS * 86400) . ($pid !== '' ? '.' . $pid : '');
     return $payload . '.' . sign_payload($payload);
+}
+
+/* ── 사람마다 입장코드 (예: 1111 → 사모님) — app_state('people') 에 [{id, name, code}] ── */
+function people_list(): array
+{
+    static $cache = null;
+    if ($cache === null) {
+        $v = state_get('people');
+        $cache = is_array($j = $v !== null ? json_decode($v, true) : null) ? $j : [];
+    }
+    return $cache;
+}
+
+function person_by(string $field, string $value): ?array
+{
+    foreach (people_list() as $p) {
+        if (isset($p[$field]) && hash_equals((string)$p[$field], $value)) return $p;
+    }
+    return null;
+}
+
+/** 지금 로그인한 사람: ['role' => admin|member, 'pid' => 사람 id 또는 '', 'name' => 이름 또는 ''] */
+function current_user(): ?array
+{
+    static $u = false;
+    if ($u !== false) return $u;
+    if (!auth_enabled()) return $u = ['role' => 'admin', 'pid' => '', 'name' => ''];
+    $parts = explode('.', $_COOKIE[COOKIE_NAME] ?? '');
+    if (count($parts) === 3) { [$role, $exp, $sig] = $parts; $pid = ''; }
+    elseif (count($parts) === 4) { [$role, $exp, $pid, $sig] = $parts; }
+    else return $u = null;
+    if (!in_array($role, ['admin', 'member'], true) || !ctype_digit($exp)) return $u = null;
+    $payload = "$role.$exp" . ($pid !== '' ? ".$pid" : '');
+    if (!hash_equals(sign_payload($payload), $sig)) return $u = null;
+    if ((int)$exp < time()) return $u = null;
+    if ($role === 'admin' && cfg('admin_password') === '') $role = 'member';
+    $name = '';
+    if ($pid !== '') {
+        $p = person_by('id', $pid);
+        if (!$p) return $u = null;          // 입장코드를 지운 사람은 다시 들어와야 해요
+        $name = (string)$p['name'];
+    }
+    return $u = ['role' => $role, 'pid' => $pid, 'name' => $name];
 }
 
 function current_role(): ?string
 {
-    if (!auth_enabled()) return 'admin';
-    $parts = explode('.', $_COOKIE[COOKIE_NAME] ?? '');
-    if (count($parts) !== 3) return null;
-    [$role, $exp, $sig] = $parts;
-    if (!in_array($role, ['admin', 'member'], true) || !ctype_digit($exp)) return null;
-    if (!hash_equals(sign_payload("$role.$exp"), $sig)) return null;
-    if ((int)$exp < time()) return null;
-    if ($role === 'admin' && cfg('admin_password') === '') $role = 'member';
-    return $role;
+    return current_user()['role'] ?? null;
 }
 
 function can_edit(?string $role): bool
@@ -91,16 +126,18 @@ function api_login(): array
 
     $pw = trim((string)(body_json()['password'] ?? ''));
     $role = null;
+    $person = null;
     if (cfg('admin_password') !== '' && hash_equals(cfg('admin_password'), $pw)) $role = 'admin';
     elseif (cfg('app_password') !== '' && hash_equals(cfg('app_password'), $pw)) $role = 'member';
+    elseif ($pw !== '' && ($person = person_by('code', $pw))) $role = 'member';
     if ($role === null) {
         q('INSERT INTO login_failures (ip, cnt, last_ts) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE cnt = VALUES(cnt), last_ts = VALUES(last_ts)',
           [$ip, $count + 1, $now]);
         throw new ApiError(401, '비밀번호가 맞지 않아요');
     }
     q('DELETE FROM login_failures WHERE ip = ?', [$ip]);
-    set_session_cookie(make_token($role), SESSION_DAYS * 86400);
-    return ['role' => $role, 'auth' => true];
+    set_session_cookie(make_token($role, $person['id'] ?? ''), SESSION_DAYS * 86400);
+    return ['role' => $role, 'auth' => true, 'name' => $person['name'] ?? ''];
 }
 
 function api_logout(): array
@@ -115,8 +152,73 @@ function api_me(): array
     return [
         'auth' => auth_enabled(),
         'role' => $role,
+        'name' => current_user()['name'] ?? '',
         'can_edit' => can_edit($role),
         'has_admin' => cfg('admin_password') !== '',
         'server' => 'php',   // 화면이 "PDF를 브라우저에서 그림으로 바꿔 올리기" 방식으로 동작하게
     ];
+}
+
+/** 라이브 메세지를 보낼 수 있는 사람: 관리자, 또는 자기 입장코드로 들어온 사람 */
+function can_message(): bool
+{
+    $u = current_user();
+    return $u && (can_edit($u['role']) || $u['name'] !== '');
+}
+
+/** 메세지에 붙일 보낸 사람 이름 */
+function sender_name(): string
+{
+    $u = current_user();
+    if (!$u) return '';
+    if ($u['name'] !== '') return $u['name'];
+    return $u['role'] === 'admin' && auth_enabled() ? '관리자' : '';
+}
+
+// ── 입장코드 관리 (관리자) ──
+function api_get_people(): array
+{
+    return ['people' => array_map(fn($p) => ['id' => $p['id'], 'name' => $p['name'], 'code' => $p['code']], people_list())];
+}
+
+function api_put_people(): array
+{
+    $out = [];
+    $codes = [];
+    foreach ((array)(body_json()['people'] ?? []) as $p) {
+        $name = mb_substr(trim(preg_replace('/\s+/u', ' ', (string)($p['name'] ?? ''))), 0, 20);
+        $code = trim((string)($p['code'] ?? ''));
+        if ($name === '' && $code === '') continue;
+        if ($name === '') throw new ApiError(400, "입장코드 $code 의 이름을 적어주세요");
+        if (!preg_match('/^\S{4,30}$/u', $code)) throw new ApiError(400, "$name 님의 입장코드는 띄어쓰기 없이 4글자 이상이어야 해요");
+        if (isset($codes[$code])) throw new ApiError(400, "입장코드 $code 가 두 번 들어 있어요");
+        if ((cfg('admin_password') !== '' && hash_equals(cfg('admin_password'), $code))
+            || (cfg('app_password') !== '' && hash_equals(cfg('app_password'), $code))) {
+            throw new ApiError(400, "입장코드 $code 는 관리자·팀 공용 코드와 같아서 쓸 수 없어요");
+        }
+        $codes[$code] = true;
+        $id = preg_match('/^[a-f0-9]{8}$/', (string)($p['id'] ?? '')) ? $p['id'] : bin2hex(random_bytes(4));
+        $out[] = ['id' => $id, 'name' => $name, 'code' => $code];
+        if (count($out) >= 50) break;
+    }
+    state_set('people', json_encode($out, JSON_UNESCAPED_UNICODE));
+    return ['people' => $out];
+}
+
+/** 메세지 받는 사람 구분: 입장코드 사람 id / 'admin' / 'team' (팀 공용 코드) */
+function recipient_key(): string
+{
+    $u = current_user();
+    if (!$u) return '';
+    if ($u['pid'] !== '') return $u['pid'];
+    return $u['role'] === 'admin' ? 'admin' : 'team';
+}
+
+function api_live_recipients(): array
+{
+    if (!can_message()) throw new ApiError(403, '메세지를 보낼 수 없어요');
+    $list = [['key' => 'admin', 'name' => '관리자']];
+    foreach (people_list() as $p) $list[] = ['key' => $p['id'], 'name' => $p['name']];
+    if (cfg('app_password') !== '') $list[] = ['key' => 'team', 'name' => '팀원(공용 코드)'];
+    return ['recipients' => $list, 'me' => recipient_key()];
 }
