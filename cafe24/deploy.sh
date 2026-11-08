@@ -17,15 +17,16 @@ if [ -f "$STATE" ] && [ -z "${FTP_HOST:-}" ]; then . "$STATE"; fi
 if [ -z "${FTP_HOST:-}" ]; then
   read -r -p "FTP 주소 (예: jandi.cafe24.com): " FTP_HOST
   read -r -p "FTP 아이디: " FTP_USER
-  read -r -p "올릴 폴더 (보통 www — 모르면 그냥 엔터): " FTP_DIR
-  printf 'FTP_HOST=%q\nFTP_USER=%q\nFTP_DIR=%q\n' "$FTP_HOST" "$FTP_USER" "${FTP_DIR:-www}" > "$STATE"
+  read -r -p "올릴 폴더 (FTP 첫 폴더가 웹 폴더면 그냥 엔터): " FTP_DIR
+  printf 'FTP_HOST=%q\nFTP_USER=%q\nFTP_DIR=%q\n' "$FTP_HOST" "$FTP_USER" "${FTP_DIR:-}" > "$STATE"
 fi
-FTP_DIR="${FTP_DIR:-www}"
+# 웹 폴더: 비어 있으면 FTP 첫 폴더 (카페24 뉴아우토반은 첫 폴더가 바로 웹 폴더)
+FTP_BASE="ftp://$FTP_HOST/${FTP_DIR:+$FTP_DIR/}"
 if [ -z "${FTP_PASS:-}" ]; then read -r -s -p "FTP 비밀번호: " FTP_PASS; echo; fi
 
 put() {  # put <로컬 파일> <원격 경로(FTP_DIR 기준)>
   curl -sS --fail --ftp-create-dirs --ftp-pasv --retry 2 \
-       --user "$FTP_USER:$FTP_PASS" -T "$1" "ftp://$FTP_HOST/$FTP_DIR/$2"
+       --user "$FTP_USER:$FTP_PASS" -T "$1" "$FTP_BASE$2"
 }
 
 upload_tree() {  # upload_tree <로컬 폴더> <원격 하위 경로> <바뀐 것 기록 파일>
@@ -46,7 +47,7 @@ upload_tree() {  # upload_tree <로컬 폴더> <원격 하위 경로> <바뀐 �
     fi
   done < <(find "$src" -type f ! -name '.DS_Store' ! -name 'config.php' -print0 | sort -z)
   mv "$new" "$manifest"
-  echo "올림 $n개 · 그대로 $skip개 · 실패 $fail개"
+  echo "올림 ${n}개 · 그대로 ${skip}개 · 실패 ${fail}개"
   [ "$fail" -eq 0 ]
 }
 
@@ -54,8 +55,8 @@ case "${1:-}" in
   --check)
     echo "FTP 접속 확인: ftp://$FTP_HOST/ (아이디 $FTP_USER)"
     curl -sS --fail --ftp-pasv --user "$FTP_USER:$FTP_PASS" "ftp://$FTP_HOST/" | head -20
-    echo "--- $FTP_DIR 폴더:"
-    curl -sS --fail --ftp-pasv --user "$FTP_USER:$FTP_PASS" "ftp://$FTP_HOST/$FTP_DIR/" | head -20
+    echo "--- 웹 폴더 ($FTP_BASE):"
+    curl -sS --fail --ftp-pasv --user "$FTP_USER:$FTP_PASS" "$FTP_BASE" | head -20
     ;;
   --config)
     CFG="${2:-$ROOT/cafe24/www/config.php}"
@@ -65,13 +66,13 @@ case "${1:-}" in
   "")
     BUILD="$ROOT/cafe24/build"
     bash "$ROOT/cafe24/build.sh" "$BUILD" >/dev/null
-    echo "앱 코드 올리는 중 → ftp://$FTP_HOST/$FTP_DIR/"
+    echo "앱 코드 올리는 중 → $FTP_BASE"
     upload_tree "$BUILD" "" "$ROOT/cafe24/.deploy-app"
     echo "✅ 반영 완료"
     ;;
   *)
     [ -d "$1" ] || { echo "폴더가 없어요: $1"; exit 1; }
-    echo "악보 그림·DB 꾸러미 올리는 중 → ftp://$FTP_HOST/$FTP_DIR/data/"
+    echo "악보 그림·DB 꾸러미 올리는 중 → ${FTP_BASE}data/"
     upload_tree "$(cd "$1" && pwd)" "data/" "$ROOT/cafe24/.deploy-data"
     echo "✅ 올림 — 이제 bash cafe24/tools/import.sh 로 DB에 넣어주세요"
     ;;

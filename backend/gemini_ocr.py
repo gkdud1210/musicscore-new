@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import random
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -35,7 +36,7 @@ PARALLEL_PAGES = 3          # 무료 사용량은 1분에 보낼 수 있는 횟�
 THINKING_LEVEL = os.getenv("GEMINI_THINKING", "low").strip()
 _thinking_ok = {"value": bool(THINKING_LEVEL)}
 MAX_TRIES = 6
-TIMEOUT_SECONDS = 120
+TIMEOUT_SECONDS = 60
 
 PROMPT = """You read one page of Korean worship song sheet music (찬양 악보), scanned or exported from a worship team's setlist (콘티) PDF.
 
@@ -70,6 +71,11 @@ def _model() -> str:
     return os.getenv("GEMINI_MODEL", "").strip() or DEFAULT_MODEL
 
 
+def _fallback_model() -> str:
+    """기본 모델이 바쁠 때(한도·서버 오류·응답 없음) 대신 쓰는 가벼운 모델"""
+    return os.getenv("GEMINI_FALLBACK_MODEL", "").strip() or "gemini-flash-lite-latest"
+
+
 def _page_jpeg_b64(doc, page_index: int) -> str:
     img = render_page_image(doc, page_index, zoom=zoom_for_width(doc[page_index], MAX_IMAGE_EDGE))
     img.thumbnail((MAX_IMAGE_EDGE, MAX_IMAGE_EDGE))
@@ -78,13 +84,14 @@ def _page_jpeg_b64(doc, page_index: int) -> str:
     return base64.standard_b64encode(buf.getvalue()).decode("ascii")
 
 
-def _call(image_b64: str, page_index: int, page_count: int) -> dict:
+def _call(image_b64: str, page_index: int, page_count: int, model: str = "") -> dict:
+    model = model or _model()
     gen = {
         "temperature": 0,
         "responseMimeType": "application/json",
         "responseSchema": RESPONSE_SCHEMA,
     }
-    if _thinking_ok["value"]:
+    if _thinking_ok["value"] and model == _model():
         gen["thinkingConfig"] = {"thinkingLevel": THINKING_LEVEL}
     body = json.dumps({
         "contents": [{"role": "user", "parts": [
@@ -94,7 +101,7 @@ def _call(image_b64: str, page_index: int, page_count: int) -> dict:
         "generationConfig": gen,
     }).encode("utf-8")
     req = urllib.request.Request(
-        API_URL.format(model=_model()), data=body, method="POST",
+        API_URL.format(model=model), data=body, method="POST",
         headers={"Content-Type": "application/json",
                  "x-goog-api-key": os.getenv("GEMINI_API_KEY", "").strip()})
 
@@ -108,11 +115,14 @@ def _call(image_b64: str, page_index: int, page_count: int) -> dict:
             if e.code == 400 and "thinking" in detail.lower() and _thinking_ok["value"]:
                 logger.info(f"이 모델은 thinkingLevel={THINKING_LEVEL} 을 못 씀 → 빼고 다시")
                 _thinking_ok["value"] = False
-                return _call(image_b64, page_index, page_count)
+                return _call(image_b64, page_index, page_count, model)
             if e.code in (401, 403) or (e.code == 400 and "API key" in detail):
                 raise RuntimeError("제미나이 API 키가 올바르지 않거나 권한이 없어요 (GEMINI_API_KEY 확인)") from e
             if e.code == 404:
                 raise RuntimeError(f"제미나이 모델 '{_model()}'을 찾을 수 없어요 (GEMINI_MODEL 확인)") from e
+            if e.code in (429, 500, 502, 503, 504) and model != _fallback_model():
+                logger.info(f"제미나이 {model} {e.code} → {_fallback_model()} 로 ({page_index + 1}쪽)")
+                return _call(image_b64, page_index, page_count, _fallback_model())
             if e.code in (429, 500, 502, 503, 504) and attempt < MAX_TRIES - 1:
                 wait = min(60, 5 * 2 ** attempt) + random.uniform(0, 2)
                 logger.info(f"제미나이 {e.code} — {wait:.0f}초 뒤 다시 ({page_index + 1}쪽)")
@@ -121,7 +131,10 @@ def _call(image_b64: str, page_index: int, page_count: int) -> dict:
             if e.code == 429:
                 raise RuntimeError("제미나이 사용량 한도에 걸렸어요. 잠시 뒤 다시 분석해주세요") from e
             raise RuntimeError(f"제미나이 API 오류 ({e.code}): {detail}") from e
-        except (urllib.error.URLError, TimeoutError) as e:
+        except (urllib.error.URLError, TimeoutError, socket.timeout) as e:
+            if model != _fallback_model():
+                logger.info(f"제미나이 {model} 응답 없음 → {_fallback_model()} 로 ({page_index + 1}쪽)")
+                return _call(image_b64, page_index, page_count, _fallback_model())
             if attempt < MAX_TRIES - 1:
                 time.sleep(3 * (attempt + 1))
                 continue

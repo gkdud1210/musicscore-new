@@ -4,7 +4,8 @@ DirectoryIndex index.html
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
-  # http → https
+  # http → https (www 폴더에 .force_https 파일이 있을 때만 — 도메인 연결·인증서가 준비된 뒤에 켠다)
+  RewriteCond %{DOCUMENT_ROOT}/.force_https -f
   RewriteCond %{HTTPS} !=on
   RewriteCond %{HTTP:X-Forwarded-Proto} !=https
   RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1)

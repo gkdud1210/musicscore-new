@@ -21,4 +21,6 @@ return [
     'gemini_api_key' => '',
     'gemini_model' => 'gemini-flash-latest',
     'gemini_thinking' => 'low',
+    // 기본 모델이 바쁠 때 대신 쓰는 가벼운 모델
+    'gemini_fallback_model' => 'gemini-flash-lite-latest',
 ];

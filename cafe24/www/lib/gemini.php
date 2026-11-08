@@ -38,9 +38,8 @@ function gemini_schema(): array
     ];
 }
 
-function gemini_post(array $body): array
+function gemini_post(array $body, string $model, int $timeout = 70): array
 {
-    $model = trim((string)cfg('gemini_model')) ?: 'gemini-flash-latest';
     $ch = curl_init(sprintf(GEMINI_URL, rawurlencode($model)));
     curl_setopt_array($ch, [
         CURLOPT_POST => true,
@@ -48,13 +47,13 @@ function gemini_post(array $body): array
         CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'x-goog-api-key: ' . trim((string)cfg('gemini_api_key'))],
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_TIMEOUT => 100,
+        CURLOPT_TIMEOUT => $timeout,
     ]);
     $raw = curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err = curl_error($ch);
     curl_close($ch);
-    if ($raw === false) throw new ApiError(503, "제미나이에 연결할 수 없어요 ($err)");
+    if ($raw === false) return [0, "연결 실패: $err"];
     return [$code, (string)$raw];
 }
 
@@ -73,12 +72,21 @@ function gemini_read_page(string $jpegPath, int $pageNumber, int $pageCount): ar
         ]]],
         'generationConfig' => $gen,
     ];
-    [$code, $raw] = gemini_post($body);
-    if ($code === 400 && isset($gen['thinkingConfig']) && stripos($raw, 'thinking') !== false) {
-        // 이 모델은 생각 수준 설정을 모름 → 기억해 두고 빼고 다시
-        @file_put_contents($flag, date('c'));
-        unset($body['generationConfig']['thinkingConfig']);
-        [$code, $raw] = gemini_post($body);
+    // 기본 모델이 바쁘면(한도·서버 오류·응답 없음) 가벼운 모델로 한 번 더 (2026-11-08: Flash 가 한동안 429/무응답)
+    $primary = trim((string)cfg('gemini_model')) ?: 'gemini-flash-latest';
+    $fallback = trim((string)cfg('gemini_fallback_model')) ?: 'gemini-flash-lite-latest';
+    $models = $fallback !== $primary ? [$primary, $fallback] : [$primary];
+    foreach ($models as $mi => $model) {
+        $b = $body;
+        if ($mi > 0) unset($b['generationConfig']['thinkingConfig']);
+        [$code, $raw] = gemini_post($b, $model, $mi === 0 ? 60 : 70);
+        if ($code === 400 && isset($b['generationConfig']['thinkingConfig']) && stripos($raw, 'thinking') !== false) {
+            // 이 모델은 생각 수준 설정을 모름 → 기억해 두고 빼고 다시
+            @file_put_contents($flag, date('c'));
+            unset($b['generationConfig']['thinkingConfig']);
+            [$code, $raw] = gemini_post($b, $model);
+        }
+        if ($code === 200 || !($code === 0 || $code === 429 || $code >= 500)) break;
     }
     if ($code !== 200) {
         $detail = mb_substr($raw, 0, 300);
@@ -87,6 +95,7 @@ function gemini_read_page(string $jpegPath, int $pageNumber, int $pageCount): ar
         }
         if ($code === 404) throw new ApiError(400, '제미나이 모델을 찾을 수 없어요 (config.php 의 gemini_model)');
         if ($code === 429) throw new ApiError(429, '제미나이 사용량 한도 — 잠시 기다렸다가 다시 할게요');
+        if ($code === 0) throw new ApiError(503, '제미나이가 응답하지 않아요 — 잠시 뒤 다시 할게요');
         if ($code >= 500) throw new ApiError(503, "제미나이 서버가 잠시 바빠요 ($code)");
         throw new ApiError(502, "제미나이 오류 ($code): $detail");
     }
