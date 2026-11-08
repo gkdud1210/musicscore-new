@@ -86,18 +86,21 @@ function renderWorshipSetup() {
   const canSave = AuthState.canEdit;
   const sameDay = LibState.contis.filter(c => c.conti_date === W.date && c.songs.length);
   const inSets = new Set(W.sets.map(st => st.conti_id).filter(Boolean));
-  const q = W.q.trim().toLowerCase().normalize('NFC');
-  const others = LibState.contis
-    .filter(c => c.songs.length && c.conti_date !== W.date)
-    .filter(c => !q || `${c.title} ${c.conti_date || ''}`.toLowerCase().normalize('NFC').includes(q))
-    .slice(0, q ? 40 : 12);
+  const q = W.q.trim();
+  // ⭐ 즐겨찾기(표시를 붙인) 콘티는 맨 위에 전부
+  const favs = LibState.contis.filter(c => c.songs.length && marksOf(contiMarkKey(c.id)).length);
+  const favIds = new Set(favs.map(c => c.id));
+  // 콘티 이름·날짜뿐 아니라 찬양 제목으로도 찾는다 (그 곡이 든 콘티들)
+  const others = filterContisByQuery(
+    LibState.contis.filter(c => c.songs.length && c.conti_date !== W.date && (q || !favIds.has(c.id))), q)
+    .slice(0, q ? 60 : 12);
   const upcoming = W.services.filter(s => s.sets?.length).slice(0, 8);
   const totalSongs = W.sets.reduce((n, st) => n + st.songs.length, 0);
 
-  const contiRow = c => `
+  const contiRow = (c, hits = []) => `
     <div class="ws-pick-row">
-      <span class="ws-pick-name">${c.conti_date ? `<span class="ws-date">${escapeHtml(c.conti_date)}</span>` : ''}${escapeHtml(c.title)}
-        <small>${c.songs.length}곡</small></span>
+      <span class="ws-pick-name">${marksOf(contiMarkKey(c.id)).length ? `<span class="card-marks">${marksOf(contiMarkKey(c.id)).join('')}</span> ` : ''}${c.conti_date ? `<span class="ws-date">${escapeHtml(c.conti_date)}</span>` : ''}${escapeHtml(c.title)}
+        <small>${c.songs.length}곡</small>${hits.length ? `<em class="ws-hits">🎵 ${hits.map(escapeHtml).join(', ')}</em>` : ''}</span>
       <button type="button" class="btn-sm" data-ws="add-conti" data-id="${c.id}" ${inSets.has(c.id) ? 'disabled' : ''}>
         ${inSets.has(c.id) ? '✓ 담김' : '＋ 추가'}</button>
     </div>`;
@@ -139,16 +142,17 @@ function renderWorshipSetup() {
     <div class="ws-actions">
       ${canSave ? `<button type="button" class="btn-sm" data-ws="save" ${W.sets.length ? '' : 'disabled'}>💾 셋팅 저장</button>` : ''}
       <button type="button" class="btn-sm" data-ws="preview" ${W.sets.length ? '' : 'disabled'}>👀 나만 보기</button>
-      <button type="button" class="btn-now" data-ws="start" ${W.sets.length ? '' : 'disabled'}>📡 라이브 시작 · ${W.sets.length}콘티 ${totalSongs}곡</button>
+      <button type="button" class="btn-now" data-ws="start" ${W.sets.length ? '' : 'disabled'}>📡 ${LiveState.live ? '진행 중인 라이브에 더하기' : '라이브 시작'} · ${W.sets.length}콘티 ${totalSongs}곡</button>
     </div>
 
     <h3 class="song-section-title">＋ 콘티 추가</h3>
-    ${sameDay.length ? `<p class="ws-sub">📅 ${escapeHtml(dateLabel(W.date))} 콘티</p>${sameDay.map(contiRow).join('')}` : ''}
+    ${favs.length ? `<p class="ws-sub">⭐ 즐겨찾기 콘티 <small>${favs.length}</small></p><div class="ws-favs">${favs.map(c => contiRow(c)).join('')}</div>` : ''}
+    ${sameDay.length ? `<p class="ws-sub">📅 ${escapeHtml(dateLabel(W.date))} 콘티</p>${sameDay.map(c => contiRow(c)).join('')}` : ''}
     ${LibState.setlist.length ? `<div class="ws-pick-row">
       <span class="ws-pick-name">🎼 지금 담은 곡 <small>${LibState.setlist.length}곡</small></span>
       <button type="button" class="btn-sm" data-ws="add-setlist">＋ 추가</button></div>` : ''}
-    <input type="search" class="lib-edit-title-input ws-search" id="wsSearch" value="${escapeHtml(W.q)}" placeholder="다른 콘티 찾기 (이름·날짜)" />
-    <div class="ws-pick">${others.map(contiRow).join('') || '<p class="ws-empty">찾는 콘티가 없어요.</p>'}</div>`;
+    <input type="search" class="lib-edit-title-input ws-search" id="wsSearch" value="${escapeHtml(W.q)}" placeholder="다른 콘티 찾기 (이름·날짜·찬양 제목)" />
+    <div class="ws-pick">${others.map(({ c, hits }) => contiRow(c, hits)).join('') || '<p class="ws-empty">찾는 콘티가 없어요.</p>'}</div>`;
 
   document.getElementById('wsDate').addEventListener('change', e => {
     if (!e.target.value) return;
@@ -209,16 +213,21 @@ async function saveWorship(quiet = false) {
 
 async function startWorshipLive() {
   const p = worshipPayload();
-  if (!confirm(`"${p.title}" 라이브를 시작할까요?\n콘티 ${p.sets.length}개 · 접속한 모든 사람에게 알림이 가요.`)) return;
+  const running = LiveState.live;
+  if (!confirm(running
+    ? `지금 "${running.title}" 라이브가 진행 중이에요.\n새로 시작하지 않고, 이 콘티 ${p.sets.length}개를 그 라이브에 더할까요? (이미 있는 콘티는 빼고)`
+    : `"${p.title}" 라이브를 시작할까요?\n콘티 ${p.sets.length}개 · 접속한 모든 사람에게 알림이 가요.`)) return;
   if (AuthState.canEdit && Worship.dirty) await saveWorship(true);
   try {
-    const { live } = await apiJson('/api/live', jsonBody('POST', { ...p, date: Worship.date }));
+    const { live, joined } = await apiJson('/api/live', jsonBody('POST', { ...p, date: Worship.date }));
     setLiveSeen(live.id);
+    lsSet(LIVE_LEFT_KEY, '');
+    setFocusSeen(live);
     LiveState.live = live;
     renderLiveIndicator();
     closeModal(true);
     openLiveViewer();
-    showToast('📡 라이브 시작! 접속한 사람들에게 알림을 보냈어요.', 'success');
+    showToast(joined ? '진행 중인 라이브에 콘티를 더했어요. 모두의 화면에 같이 보여요.' : '📡 라이브 시작! 접속한 사람들에게 알림을 보냈어요.', 'success');
   } catch (e) {
     showToast('라이브 시작 실패: ' + e.message, 'error');
   }

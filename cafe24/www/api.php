@@ -63,6 +63,8 @@ $ROUTES = [
     ['GET', '#^/live$#', 'api_get_live', 'member'],
     ['POST', '#^/live$#', 'api_start_live', 'member_ok'],
     ['DELETE', '#^/live$#', 'api_stop_live', 'member_ok'],
+    ['POST', '#^/live/sets$#', 'api_add_live_set', 'member_ok'],
+    ['POST', '#^/live/focus$#', 'api_live_focus', 'member_ok'],
     ['GET', '#^/services$#', 'api_list_services', 'member'],
     ['GET', '#^/services/(\d{4}-\d{2}-\d{2})$#', 'api_get_service', 'member'],
     ['PUT', '#^/services/(\d{4}-\d{2}-\d{2})$#', 'api_put_service', 'admin'],

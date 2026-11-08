@@ -2056,3 +2056,13 @@ form.dirty .lib-edit-title-input { border-color: #f59e0b; background: rgba(245,1
   .header-account-role { display: none; }
 }
 .install-guide-box .install-later { width: 100%; margin-top: 8px; padding: 10px; }
+
+/* 라이브: 함께 고치기·알림주기 */
+.live-top-btn.notify { background: #f59e0b; border-color: #f59e0b; color: #111; font-weight: 700; }
+.live-set-tab.focus:not(.active) { border-color: #f59e0b; box-shadow: inset 0 0 0 1px #f59e0b; }
+.live-set-tab.focus::before { content: '📣 '; }
+.live-add-note { font-size: 12px; color: #bbb; margin: 2px 0 8px; }
+.live-add-item[disabled] { opacity: .45; cursor: default; }
+.live-add-hits, .ws-hits { display: block; font-style: normal; font-size: 12px; color: var(--amber, #f59e0b); margin-top: 2px; }
+.ws-favs { margin-bottom: 6px; }
+.ws-sub small { color: var(--text-muted); font-weight: 400; margin-left: 4px; }

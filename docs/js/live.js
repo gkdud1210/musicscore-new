@@ -1,15 +1,32 @@
 /**
- * 라이브 모드 (NOW)
- * - 한 사람이 콘티(또는 새 콘티 트레이)에서 📡 NOW를 누르면 서버에 "지금 이 콘티" 를 올린다.
- * - 접속한 사람들은 몇 초마다 확인하다가 새 라이브가 생기면 깜빡이는 알림을 받고,
- *   OKAY를 누르면 콘티 악보를 순서대로 옆으로 넘겨 보는 화면이 열린다.
+ * 라이브 모드 (함께 보는 콘티)
+ * - 누가 📡 라이브를 시작하면 서버에 올라가고, 접속한 사람들은 몇 초마다 확인하다 깜빡이는 알림을 받는다.
+ * - 라이브가 켜져 있는 동안 관리자는 누구나 ＋ 콘티로 콘티를 더할 수 있고, 모두의 위 메뉴에 같이 생긴다.
+ * - 📣 알림주기: 지금 보고 있는 콘티(곡)로 모두의 화면이 넘어간다.
+ * - 끝내기는 처음 시작한 기기만. 다른 사람은 🚪 나가기(내 화면만 닫고 알림도 그만).
  * 사용자 데이터는 escapeHtml을 거쳐서만 innerHTML에 넣는다.
  */
 
 const LIVE_POLL_MS = 4000;
+const LIVE_POLL_VIEWING_MS = 2500;   // 라이브 화면을 보는 중엔 더 자주 (알림주기가 빨리 오게)
 const LIVE_SEEN_KEY = 'scoreshift.live.seen';
+const LIVE_LEFT_KEY = 'jandi.live.left';
+const LIVE_FOCUS_KEY = 'jandi.live.focus';
 
 const LiveState = { live: null, timer: null, viewerOpen: false, titleTimer: null, originalTitle: document.title };
+
+function lsGet(k) { try { return localStorage.getItem(k) || ''; } catch { return ''; } }
+function lsSet(k, v) { try { localStorage.setItem(k, String(v)); } catch { /* 저장 불가 환경 */ } }
+const liveLeft = live => !!live && lsGet(LIVE_LEFT_KEY) === String(live.id);
+/** 이 라이브에서 마지막으로 본 알림주기 시각 */
+function focusSeenTs(live) {
+  const [id, ts] = lsGet(LIVE_FOCUS_KEY).split(':');
+  return live && id === String(live.id) ? Number(ts) || 0 : 0;
+}
+function setFocusSeen(live) {
+  if (live?.focus) lsSet(LIVE_FOCUS_KEY, `${live.id}:${live.focus.ts}`);
+}
+const normQ = t => String(t || '').toLowerCase().normalize('NFC').replace(/\s+/g, '');
 
 function liveSeenId() {
   try { return Number(localStorage.getItem(LIVE_SEEN_KEY) || 0); } catch { return 0; }
@@ -39,36 +56,69 @@ function applyLive(live) {
     }
     return;
   }
+  const V = LiveState.viewing;
+  const watching = LiveState.viewerOpen && V && !V.local && V.id === live.id;
+  // 다른 관리자가 콘티를 더했거나 알림주기를 했으면 화면을 맞춘다
+  if (watching && V.rev !== live.rev) syncLiveViewer(live);
+
+  const newFocus = live.focus && live.focus.ts > focusSeenTs(live);
+  if (liveLeft(live)) {             // 나간 사람에게는 알리지 않는다
+    if (newFocus) setFocusSeen(live);
+    return;
+  }
+  if (watching) {
+    if (newFocus) {
+      setFocusSeen(live);
+      if (jumpToFocus(live)) showToast(`📣 지금: ${live.focus.title}`, 'info', 3000);
+    }
+    return;
+  }
   if (live.id !== liveSeenId()) showLiveAlert(live);
-  // 보고 있는 중에 다른 콘티로 바뀌면 알림으로 알려준다 (showLiveAlert가 처리)
+  else if (newFocus) showLiveAlert(live, true);
+}
+
+function scheduleLivePoll() {
+  clearTimeout(LiveState.timer);
+  LiveState.timer = setTimeout(async () => {
+    await pollLive();
+    scheduleLivePoll();
+  }, LiveState.viewerOpen ? LIVE_POLL_VIEWING_MS : LIVE_POLL_MS);
 }
 
 function startLivePolling() {
   pollLive();
-  clearInterval(LiveState.timer);
-  LiveState.timer = setInterval(pollLive, LIVE_POLL_MS);
+  scheduleLivePoll();
   document.addEventListener('visibilitychange', () => { if (!document.hidden) pollLive(); });
 }
 
 /* ── NOW 보내기 / 끝내기 ───────────────────────────────── */
-async function sendLive(title, songIds) {
+async function sendLive(title, songIds, contiId = null) {
   if (!songIds.length) { showToast('보낼 곡이 없어요.', 'info'); return; }
-  if (!confirm(`"${title}" 콘티를 지금 접속한 모든 사람에게 띄울까요?`)) return;
+  const running = LiveState.live;
+  if (!confirm(running
+    ? `지금 진행 중인 라이브 "${running.title}"에 "${title}" 콘티를 더할까요?`
+    : `"${title}" 콘티로 라이브를 시작할까요? 지금 접속한 모든 사람에게 알림이 가요.`)) return;
   try {
-    const { live } = await apiJson('/api/live', jsonBody('POST', { title, song_ids: songIds }));
+    const { live, joined } = await apiJson('/api/live', jsonBody('POST', { title, song_ids: songIds, conti_id: contiId }));
     setLiveSeen(live.id);          // 보낸 사람은 알림 없이 바로 화면을 연다
+    lsSet(LIVE_LEFT_KEY, '');
+    setFocusSeen(live);
     LiveState.live = live;
     renderLiveIndicator();
     if (typeof closeModal === 'function' && LibState?.modal) closeModal();
     openLiveViewer();
-    showToast('📡 NOW! 접속한 사람들에게 알림을 보냈어요.', 'success');
+    if (joined) {
+      const set = [...live.sets].reverse().find(st => st.title === title);
+      if (set) switchLiveSetKey(set.key, 'first');
+    }
+    showToast(joined ? '진행 중인 라이브에 콘티를 더했어요. 모두의 화면에 같이 보여요.' : '📡 라이브 시작! 접속한 사람들에게 알림을 보냈어요.', 'success');
   } catch (e) {
-    showToast('NOW 보내기 실패: ' + e.message, 'error');
+    showToast('라이브 실패: ' + e.message, 'error');
   }
 }
 
 async function stopLive() {
-  if (!confirm('라이브를 끝낼까요? 다른 사람들 화면의 라이브 표시도 사라져요.')) return;
+  if (!confirm('라이브를 끝낼까요? 모든 사람의 라이브 화면이 닫혀요.')) return;
   try {
     await apiJson('/api/live', { method: 'DELETE' });
     LiveState.live = null;
@@ -79,13 +129,42 @@ async function stopLive() {
   }
 }
 
+/** 나가기: 내 화면만 닫고, 이 라이브의 알림도 그만 받는다 (위의 LIVE 표시로 다시 들어올 수 있음) */
+function leaveLive() {
+  if (LiveState.live) {
+    lsSet(LIVE_LEFT_KEY, LiveState.live.id);
+    setLiveSeen(LiveState.live.id);
+    setFocusSeen(LiveState.live);
+  }
+  hideLiveAlert();
+  closeLiveViewer();
+  showToast('라이브에서 나왔어요. 아래 LIVE 표시를 누르면 다시 들어갈 수 있어요.', 'info', 4000);
+}
+
+/** 📣 알림주기: 지금 보고 있는 콘티·곡으로 모두의 화면을 넘긴다 */
+async function notifyLive() {
+  const V = LiveState.viewing;
+  const set = V?.sets[V.cur];
+  if (!set) return;
+  if (set.mine) { showToast('내 화면에만 더한 콘티는 알릴 수 없어요.', 'info'); return; }
+  const sl = (LiveState.slides || [])[liveIndex()];
+  try {
+    const { live } = await apiJson('/api/live/focus', jsonBody('POST', { key: set.key, song: sl ? sl.si : 0 }));
+    setFocusSeen(live);
+    applyLive(live);
+    showToast(`📣 모두에게 "${set.title}"${sl ? ` · ${sl.song.title}` : ''}을(를) 띄웠어요.`, 'success');
+  } catch (e) {
+    showToast('알림주기 실패: ' + e.message, 'error');
+  }
+}
+
 /** 콘티 화면의 NOW 버튼: 콘티 곡 순서대로 보낸다 */
 function sendLiveFromConti() {
   const m = LibState.modal;
   if (!m || m.type !== 'conti' || !m.songs) return;
   const songs = [...m.songs].sort((a, b) => a.page_start - b.page_start);
   const conti = LibState.contis.find(c => c.id === m.id);
-  sendLive(conti?.title || songs[0]?.conti_title || '오늘 콘티', songs.map(s => s.id));
+  sendLive(conti?.title || songs[0]?.conti_title || '오늘 콘티', songs.map(s => s.id), m.id);
 }
 
 /** 새 콘티 트레이의 NOW 버튼: 담은 순서대로 보낸다 */
@@ -95,7 +174,7 @@ function sendLiveFromSetlist() {
 }
 
 /* ── 깜빡이는 알림 ─────────────────────────────────────── */
-function showLiveAlert(live) {
+function showLiveAlert(live, focus = false) {
   let el = document.getElementById('liveAlert');
   if (!el) {
     el = document.createElement('div');
@@ -104,11 +183,19 @@ function showLiveAlert(live) {
     el.setAttribute('role', 'alert');
     document.body.appendChild(el);
   }
-  el.innerHTML = `
+  const sets = liveSetsOf(live);
+  el.innerHTML = focus ? `
+    <span class="live-dot"></span>
+    <div class="live-alert-text">
+      <strong>📣 지금 이 콘티 · ${escapeHtml(live.focus.title)}</strong>
+      <span>${escapeHtml(live.title)} 라이브 · 눌러서 바로 보기</span>
+    </div>
+    <button type="button" class="live-ok-btn" data-live="ok">OKAY</button>
+    <button type="button" class="live-alert-x" data-live="dismiss" aria-label="나중에">×</button>` : `
     <span class="live-dot"></span>
     <div class="live-alert-text">
       <strong>NOW · ${escapeHtml(live.title)}</strong>
-      <span>${liveSetsOf(live).length > 1 ? `콘티 ${liveSetsOf(live).length}개 · ` : ''}${live.songs.length}곡 · ${escapeHtml(live.started_at || '')} 시작 · 지금 이 콘티로 찬양해요</span>
+      <span>${sets.length > 1 ? `콘티 ${sets.length}개 · ` : ''}${live.songs.length}곡 · ${escapeHtml(live.started_at || '')} 시작 · 지금 이 콘티로 찬양해요</span>
     </div>
     <button type="button" class="live-ok-btn" data-live="ok">OKAY</button>
     <button type="button" class="live-alert-x" data-live="dismiss" aria-label="나중에">×</button>`;
@@ -116,9 +203,10 @@ function showLiveAlert(live) {
   try { navigator.vibrate?.([200, 100, 200]); } catch { /* 진동 없음 */ }
   clearInterval(LiveState.titleTimer);
   let on = false;
+  const label = focus ? '📣 ' + live.focus.title : '🔴 NOW · ' + live.title;
   LiveState.titleTimer = setInterval(() => {
     on = !on;
-    document.title = on ? '🔴 NOW · ' + live.title : LiveState.originalTitle;
+    document.title = on ? label : LiveState.originalTitle;
   }, 1000);
 }
 
@@ -163,12 +251,17 @@ function liveSlides(set) {
 function openLiveViewer(local = null) {
   const live = local || LiveState.live;
   if (!live) return;
-  if (!local) { setLiveSeen(live.id); hideLiveAlert(); }
+  if (!local) {
+    setLiveSeen(live.id);
+    lsSet(LIVE_LEFT_KEY, '');
+    hideLiveAlert();
+  }
   // 같은 라이브를 다시 열면 보던 콘티·쪽을 그대로
   const same = LiveState.viewing && LiveState.viewing.id === live.id;
+  const sets = liveSetsOf(live).map((st, i) => ({ ...st, key: st.key || `l${i}` }));
   LiveState.viewing = {
-    id: live.id, title: live.title, local: !!local,
-    sets: [...liveSetsOf(live), ...(same ? LiveState.viewing.sets.filter(st => st.mine) : [])],
+    id: live.id, title: live.title, local: !!local, rev: live.rev,
+    sets: [...sets, ...(same ? LiveState.viewing.sets.filter(st => st.mine) : [])],
     cur: same ? LiveState.viewing.cur : 0,
     pos: same ? LiveState.viewing.pos : {},
   };
@@ -184,7 +277,54 @@ function openLiveViewer(local = null) {
   LiveState.viewerOpen = true;
   renderLiveIndicator();
   keepScreenOn(true);
+  // 알림주기가 있었으면 그 콘티·곡에서 시작
+  if (!local && live.focus && !same) {
+    setFocusSeen(live);
+    if (jumpToFocus(live)) return;
+  }
   renderLiveSet();
+}
+
+/** 서버 라이브가 바뀌면(콘티 추가·알림주기) 보던 콘티와 쪽을 지키며 다시 그린다 */
+function syncLiveViewer(live) {
+  const V = LiveState.viewing;
+  const curKey = V.sets[V.cur]?.key;
+  V.pos[curKey] = liveIndex();
+  const known = new Set(V.sets.map(st => st.key));
+  V.sets = [...live.sets, ...V.sets.filter(st => st.mine)];
+  V.rev = live.rev;
+  V.title = live.title;
+  V.cur = Math.max(0, V.sets.findIndex(st => st.key === curKey));
+  const added = live.sets.filter(st => !known.has(st.key));
+  const addBoxOpen = !document.getElementById('liveAdd')?.classList.contains('hidden');
+  if (!addBoxOpen) renderLiveSet(); else renderLiveTabs();
+  added.forEach(st => showToast(`＋ 새 콘티: ${st.title}`, 'info', 3000));
+}
+
+/** 알림주기한 콘티·곡으로 넘어가기 */
+function jumpToFocus(live) {
+  const V = LiveState.viewing;
+  const f = live.focus;
+  const i = V ? V.sets.findIndex(st => st.key === f?.key) : -1;
+  if (i < 0) return false;
+  if (V.sets[V.cur]) V.pos[V.sets[V.cur].key] = liveIndex();
+  V.cur = i;
+  V.pos[f.key] = Math.max(0, liveSlides(V.sets[i]).findIndex(sl => sl.si === f.song));
+  renderLiveSet();
+  return true;
+}
+
+function renderLiveTabs() {
+  const V = LiveState.viewing;
+  const box = document.getElementById('liveSets');
+  if (!V || !box) return;
+  const live = LiveState.live;
+  const shared = !V.local && live?.can_edit;
+  box.innerHTML = `
+      ${V.sets.map((st, i) => `<button type="button" role="tab" aria-selected="${i === V.cur}" class="live-set-tab${i === V.cur ? ' active' : ''}${st.mine ? ' mine' : ''}${!V.local && live?.focus?.key === st.key ? ' focus' : ''}"
+          data-live="set" data-set="${i}">${i + 1}. ${escapeHtml(st.title)} <span>${st.songs.length}곡</span></button>`).join('')}
+      <button type="button" class="live-set-tab add" data-live="add-set" title="${shared ? '콘티를 더하면 모두의 화면에 같이 생겨요' : '다른 콘티도 위에 추가해서 보기 (내 화면에만)'}">＋ 콘티</button>`;
+  box.querySelector('.live-set-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'center' });
 }
 
 function renderLiveSet() {
@@ -195,19 +335,19 @@ function renderLiveSet() {
   const set = V.sets[V.cur];
   const slides = liveSlides(set);
   LiveState.slides = slides;
+  const live = LiveState.live;
+  const server = !V.local && live && live.id === V.id;
   v.innerHTML = `
     <div class="live-top">
       <span class="live-badge"><span class="live-dot"></span> ${V.local ? '보기' : 'LIVE'}</span>
       <div class="live-now" id="liveNow"></div>
+      ${server && live.can_edit ? '<button type="button" class="live-top-btn notify" data-live="notify" title="지금 보고 있는 콘티·곡으로 모두의 화면을 넘겨요">📣 알림주기</button>' : ''}
       <button type="button" class="live-top-btn" data-live="fullscreen" title="전체 화면">⛶</button>
-      ${V.local ? '' : '<button type="button" class="live-top-btn" data-live="stop" title="라이브 끝내기 (모두)">■ 끝내기</button>'}
-      <button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>
+      ${!server ? '<button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>'
+        : live.mine ? '<button type="button" class="live-top-btn" data-live="stop" title="라이브 끝내기 (모두)">■ 끝내기</button><button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>'
+        : '<button type="button" class="live-top-btn" data-live="leave" title="내 화면만 닫아요. 라이브는 계속돼요">🚪 나가기</button>'}
     </div>
-    <div class="live-sets" id="liveSets" role="tablist" aria-label="콘티">
-      ${V.sets.map((st, i) => `<button type="button" role="tab" aria-selected="${i === V.cur}" class="live-set-tab${i === V.cur ? ' active' : ''}${st.mine ? ' mine' : ''}"
-          data-live="set" data-set="${i}">${i + 1}. ${escapeHtml(st.title)} <span>${st.songs.length}곡</span></button>`).join('')}
-      <button type="button" class="live-set-tab add" data-live="add-set" title="다른 콘티도 위에 추가해서 보기 (내 화면에만)">＋ 콘티</button>
-    </div>
+    <div class="live-sets" id="liveSets" role="tablist" aria-label="콘티"></div>
     <div class="live-add hidden" id="liveAdd"></div>
     <div class="live-songs" id="liveSongs">
       ${set.songs.map((s, i) => `<button type="button" class="live-song-chip" data-live="jump" data-song="${i}">
@@ -220,9 +360,10 @@ function renderLiveSet() {
     </div>
     <button type="button" class="live-nav prev" data-live="prev" aria-label="이전">‹</button>
     <button type="button" class="live-nav next" data-live="next" aria-label="다음">›</button>`;
+  renderLiveTabs();
 
   const track = document.getElementById('liveTrack');
-  const start = Math.min(V.pos[V.cur] || 0, Math.max(0, slides.length - 1));
+  const start = Math.min(V.pos[set.key] || 0, Math.max(0, slides.length - 1));
   track.scrollLeft = start * track.clientWidth;
   let raf = 0;
   track.addEventListener('scroll', () => {
@@ -230,16 +371,22 @@ function renderLiveSet() {
     raf = requestAnimationFrame(updateLiveNow);
   }, { passive: true });
   updateLiveNow();
-  document.querySelector('.live-set-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+}
+
+function switchLiveSetKey(key, at = 'keep') {
+  const V = LiveState.viewing;
+  const i = V ? V.sets.findIndex(st => st.key === key) : -1;
+  if (i >= 0) switchLiveSet(i, at);
 }
 
 function switchLiveSet(i, at = 'keep') {
   const V = LiveState.viewing;
   if (!V || i < 0 || i >= V.sets.length) return;
-  V.pos[V.cur] = liveIndex();
+  V.pos[V.sets[V.cur].key] = liveIndex();
   V.cur = i;
-  if (at === 'first') V.pos[i] = 0;
-  if (at === 'last') V.pos[i] = Math.max(0, liveSlides(V.sets[i]).length - 1);
+  const key = V.sets[i].key;
+  if (at === 'first') V.pos[key] = 0;
+  if (at === 'last') V.pos[key] = Math.max(0, liveSlides(V.sets[i]).length - 1);
   renderLiveSet();
 }
 
@@ -277,7 +424,7 @@ function updateLiveNow() {
   const V = LiveState.viewing;
   const i = liveIndex();
   const sl = slides[i];
-  if (V) V.pos[V.cur] = i;
+  if (V && V.sets[V.cur]) V.pos[V.sets[V.cur].key] = i;
   if (!sl) return;
   document.getElementById('liveNow').innerHTML = `
     <strong>${sl.si + 1}. ${escapeHtml(sl.song.title)}</strong>
@@ -318,7 +465,18 @@ function toggleLiveFullscreen() {
   else (v.requestFullscreen || v.webkitRequestFullscreen)?.call(v);
 }
 
-/* ── 라이브 화면에서 다른 콘티를 위 메뉴에 더하기 (내 화면에만) ───── */
+/* ── 라이브 화면에서 콘티 더하기: 관리자는 모두에게(함께 고치기), 팀원은 내 화면에만 ───── */
+/** 콘티 이름·날짜·곡 제목으로 찾기. 곡 제목으로 찾으면 그 곡이 든 콘티들과 곡 이름을 같이 보여준다 */
+function filterContisByQuery(contis, q) {
+  const nq = normQ(q);
+  return contis.map(c => {
+    if (!nq) return { c, hits: [] };
+    const hits = (c.songs || []).filter(s => normQ(s.title).includes(nq)).map(s => s.title);
+    const own = normQ(`${c.title}${c.conti_date || ''}`).includes(nq);
+    return own || hits.length ? { c, hits } : null;
+  }).filter(Boolean);
+}
+
 async function openLiveAdd() {
   const box = document.getElementById('liveAdd');
   if (!box) return;
@@ -327,26 +485,61 @@ async function openLiveAdd() {
   box.innerHTML = '<p class="live-add-empty">불러오는 중...</p>';
   let contis = (typeof LibState !== 'undefined' && LibState.contis?.length) ? LibState.contis : null;
   if (!contis) { try { contis = await apiJson('/api/scores'); } catch { contis = []; } }
+  contis = contis.filter(c => c.songs?.length);
   const setlist = (typeof LibState !== 'undefined' && LibState.setlist) || [];
+  const V = LiveState.viewing;
+  const shared = V && !V.local && LiveState.live?.can_edit;
+  const inLive = new Set((V?.sets || []).map(st => st.conti_id).filter(Boolean));
   box.innerHTML = `
-    <input type="search" class="live-add-search" id="liveAddSearch" placeholder="콘티 이름·날짜로 찾기" />
-    <div class="live-add-list" id="liveAddList">
-      ${setlist.length ? `<button type="button" class="live-add-item" data-live="add-setlist">🎼 담은 곡 (${setlist.length}곡)</button>` : ''}
-      ${contis.filter(c => c.songs?.length).map(c => `<button type="button" class="live-add-item" data-live="add-conti" data-id="${c.id}"
-          data-q="${escapeHtml(`${c.title} ${c.conti_date || ''}`.toLowerCase().normalize('NFC'))}">
-          ${c.conti_date ? `<span>${escapeHtml(c.conti_date)}</span> ` : ''}${escapeHtml(c.title)} <small>${c.songs.length}곡</small></button>`).join('')}
-    </div>`;
-  document.getElementById('liveAddSearch').addEventListener('input', e => {
-    const q = e.target.value.trim().toLowerCase().normalize('NFC');
-    document.querySelectorAll('#liveAddList .live-add-item[data-q]').forEach(b => { b.hidden = q && !b.dataset.q.includes(q); });
-  });
+    <p class="live-add-note">${shared ? '👥 여기서 더한 콘티는 <b>모두의 화면</b>에 같이 생겨요.' : '내 화면에만 더해져요.'}</p>
+    <input type="search" class="live-add-search" id="liveAddSearch" placeholder="콘티 이름·날짜·찬양 제목으로 찾기" />
+    <div class="live-add-list" id="liveAddList"></div>`;
+  const draw = q => {
+    const rows = filterContisByQuery(contis, q);
+    document.getElementById('liveAddList').innerHTML = `
+      ${!q && setlist.length ? `<button type="button" class="live-add-item" data-live="add-setlist">🎼 담은 곡 (${setlist.length}곡)</button>` : ''}
+      ${rows.slice(0, 80).map(({ c, hits }) => `<button type="button" class="live-add-item" data-live="add-conti" data-id="${c.id}" ${inLive.has(c.id) ? 'disabled' : ''}>
+          ${c.conti_date ? `<span>${escapeHtml(c.conti_date)}</span> ` : ''}${escapeHtml(c.title)} <small>${inLive.has(c.id) ? '✓ 이미 있음' : `${c.songs.length}곡`}</small>
+          ${hits.length ? `<em class="live-add-hits">🎵 ${hits.map(escapeHtml).join(', ')}</em>` : ''}</button>`).join('')
+        || '<p class="live-add-empty">찾는 콘티가 없어요.</p>'}`;
+  };
+  draw('');
+  const input = document.getElementById('liveAddSearch');
+  input.addEventListener('input', e => draw(e.target.value.trim()));
+  input.focus({ preventScroll: true });
 }
 
+/** 고른 콘티를 더하기: 함께 보는 라이브면 서버에(모두에게), 아니면 내 화면에만 */
 async function addLiveSet(set) {
   const V = LiveState.viewing;
   if (!V || !set?.songs?.length) return;
-  V.sets.push({ ...set, mine: true });
+  document.getElementById('liveAdd')?.classList.add('hidden');
+  if (!V.local && LiveState.live?.can_edit) {
+    try {
+      const { live, added_key } = await apiJson('/api/live/sets', jsonBody('POST', {
+        title: set.title, conti_id: set.conti_id || null, song_ids: set.songs.map(s => s.id),
+      }));
+      LiveState.live = live;
+      syncLiveViewerQuiet(live);
+      if (added_key) switchLiveSetKey(added_key, 'first');
+      showToast(added_key ? `"${set.title}"을(를) 라이브에 더했어요. 모두의 화면에 보여요.` : '이미 라이브에 있는 콘티예요.', 'success');
+    } catch (e) {
+      showToast('콘티 더하기 실패: ' + e.message, 'error');
+    }
+    return;
+  }
+  V.sets.push({ ...set, key: `mine${Date.now()}`, mine: true });
   switchLiveSet(V.sets.length - 1, 'first');
+}
+
+/** 내가 바꾼 것은 "새 콘티" 알림 없이 맞춘다 */
+function syncLiveViewerQuiet(live) {
+  const V = LiveState.viewing;
+  const curKey = V.sets[V.cur]?.key;
+  V.pos[curKey] = liveIndex();
+  V.sets = [...live.sets, ...V.sets.filter(st => st.mine)];
+  V.rev = live.rev;
+  V.cur = Math.max(0, V.sets.findIndex(st => st.key === curKey));
 }
 
 /** 콘티 하나 → 라이브용 곡 목록 (페이지 순서, 이미지 주소 포함) */
@@ -365,10 +558,17 @@ document.addEventListener('click', e => {
   const el = e.target.closest('[data-live]');
   if (!el) return;
   switch (el.dataset.live) {
-    case 'ok':
+    case 'ok': {
+      openLiveViewer();
+      const live = LiveState.live;   // 알림주기 알림이었으면 그 콘티·곡으로
+      if (live?.focus) { setFocusSeen(live); jumpToFocus(live); }
+      break;
+    }
     case 'open': openLiveViewer(); break;
+    case 'leave': leaveLive(); break;
+    case 'notify': notifyLive(); break;
     case 'dismiss':
-      if (LiveState.live) setLiveSeen(LiveState.live.id);
+      if (LiveState.live) { setLiveSeen(LiveState.live.id); setFocusSeen(LiveState.live); }
       hideLiveAlert();
       break;
     case 'close': closeLiveViewer(); break;
@@ -414,7 +614,7 @@ window.addEventListener('resize', () => {
   if (LiveState.viewerOpen) {
     const t = document.getElementById('liveTrack');
     const V = LiveState.viewing;
-    if (t && V) t.scrollLeft = (V.pos[V.cur] || 0) * t.clientWidth;
+    if (t && V && V.sets[V.cur]) t.scrollLeft = (V.pos[V.sets[V.cur].key] || 0) * t.clientWidth;
   }
 });
 

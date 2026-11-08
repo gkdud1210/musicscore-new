@@ -763,15 +763,77 @@ function api_set_marks(): array
     return ['group_key' => $key, 'marks' => $marks];
 }
 
+/**
+ * 라이브 (함께 보는 콘티)
+ * - 처음 시작한 기기에 'jandi_live' 쿠키(비밀 값)를 주고, 그 기기만 끝낼 수 있다. 다른 사람은 나가기만.
+ * - 라이브가 켜져 있을 때 누가 또 시작하면 새로 덮어쓰지 않고 그 라이브에 콘티를 더한다.
+ * - 관리자(또는 시작한 사람)는 콘티를 더하고(모두에게 보임), 📣 알림주기로 "지금 이 콘티"를 모두에게 띄운다.
+ * - rev 는 바뀔 때마다 1씩 올라서, 화면이 몇 초마다 확인하다 바뀐 것만 다시 그린다.
+ */
+const LIVE_COOKIE = 'jandi_live';
+
+function live_alive(?array $live): ?array
+{
+    if (!$live) return null;
+    $last = max((int)($live['started_ts'] ?? 0), (int)($live['updated_ts'] ?? 0));
+    if (time() - $last > LIVE_TTL_SECONDS) return null;
+    // 예전 형식(이번 업데이트 전에 시작한 라이브): 콘티마다 key 를 붙여준다
+    foreach ($live['sets'] ?? [] as $i => $st) if (empty($st['key'])) $live['sets'][$i]['key'] = "s$i";
+    return $live;
+}
+
 function current_live(): ?array
 {
     $v = state_get('live');
-    $live = $v ? json_decode($v, true) : null;
-    if ($live && time() - (int)$live['started_ts'] > LIVE_TTL_SECONDS) return null;
-    return $live ?: null;
+    return live_alive($v ? json_decode($v, true) : null);
 }
 
-function api_get_live(): array { return ['live' => current_live()]; }
+function live_is_owner(?array $live): bool
+{
+    if (!$live) return false;
+    // 예전 형식이라 시작한 사람을 모르면 관리자 누구나 시작한 사람처럼 (끝낼 수 있게)
+    if (empty($live['owner'])) return can_edit(current_role());
+    $t = (string)($_COOKIE[LIVE_COOKIE] ?? '');
+    return $t !== '' && hash_equals((string)$live['owner'], hash('sha256', $t));
+}
+
+/** 화면에 보낼 모양: 비밀 값은 빼고, 내가 시작한 라이브인지·고칠 수 있는지 표시 */
+function live_public(?array $live): ?array
+{
+    if (!$live) return null;
+    $mine = live_is_owner($live);
+    unset($live['owner']);
+    $live['mine'] = $mine;
+    $live['can_edit'] = $mine || can_edit(current_role());
+    return $live;
+}
+
+/** 라이브를 잠그고(동시에 두 사람이 고쳐도 안 꼬이게) 고친다. $fn(현재 라이브 or null) → 새 라이브 or null */
+function live_update(callable $fn): ?array
+{
+    $pdo = db();
+    $pdo->beginTransaction();
+    try {
+        q("INSERT IGNORE INTO app_state (k, v) VALUES ('live', NULL)");
+        $v = q_val("SELECT v FROM app_state WHERE k = 'live' FOR UPDATE");
+        $live = live_alive($v ? json_decode((string)$v, true) : null);
+        $next = $fn($live);
+        if ($next !== null) {
+            $next['rev'] = (int)($live['rev'] ?? 0) + 1;
+            $next['updated_ts'] = time();
+            $next['songs'] = $next['sets'] ? array_merge(...array_column($next['sets'], 'songs')) : [];   // 예전 화면용
+        }
+        q("UPDATE app_state SET v = ?, updated_at = NOW() WHERE k = 'live'",
+          [$next === null ? null : json_encode($next, JSON_UNESCAPED_UNICODE)]);
+        $pdo->commit();
+        return $next;
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+}
+
+function api_get_live(): array { return ['live' => live_public(current_live())]; }
 
 function live_songs_for(array $ids, array $sheetOf): array
 {
@@ -786,41 +848,120 @@ function live_songs_for(array $ids, array $sheetOf): array
     return $out;
 }
 
-/** NOW / 예배 라이브: sets(여러 콘티)를 보내면 위 메뉴에서 오가며 본다. song_ids 만 보내면 콘티 하나 */
-function api_start_live(): array
+/** 요청의 콘티 묶음들 → 라이브용 (곡·그림 주소 채우고, 묶음마다 고유 key) */
+function live_sets_from(array $raw): array
 {
-    $b = body_json();
-    $raw = !empty($b['sets']) && is_array($b['sets']) ? $b['sets'] : [['title' => $b['title'] ?? '', 'song_ids' => $b['song_ids'] ?? []]];
     $sheetOf = sheet_of_map();
     $sets = [];
     foreach (array_slice($raw, 0, 12) as $st) {
         $songs = live_songs_for((array)($st['song_ids'] ?? []), $sheetOf);
-        if ($songs) {
-            $sets[] = [
-                'title' => mb_substr(trim((string)($st['title'] ?? '')), 0, 100) ?: '콘티',
-                'conti_id' => isset($st['conti_id']) ? (int)$st['conti_id'] : null,
-                'songs' => $songs,
-            ];
-        }
+        if (!$songs) continue;
+        $sets[] = [
+            'key' => bin2hex(random_bytes(4)),
+            'title' => mb_substr(trim((string)($st['title'] ?? '')), 0, 100) ?: '콘티',
+            'conti_id' => isset($st['conti_id']) && $st['conti_id'] ? (int)$st['conti_id'] : null,
+            'songs' => $songs,
+        ];
     }
+    return $sets;
+}
+
+/** 이미 있는 콘티(같은 conti_id)는 두 번 넣지 않는다 */
+function live_append(array $live, array $sets): array
+{
+    $have = array_filter(array_column($live['sets'], 'conti_id'));
+    foreach ($sets as $st) {
+        if ($st['conti_id'] && in_array($st['conti_id'], $have, true)) continue;
+        if (count($live['sets']) >= 30) break;
+        $live['sets'][] = $st;
+    }
+    return $live;
+}
+
+/** 라이브 시작. 이미 켜져 있으면 그 라이브에 콘티를 더한다(joined) */
+function api_start_live(): array
+{
+    $b = body_json();
+    $raw = !empty($b['sets']) && is_array($b['sets']) ? $b['sets'] : [['title' => $b['title'] ?? '', 'song_ids' => $b['song_ids'] ?? [], 'conti_id' => $b['conti_id'] ?? null]];
+    $sets = live_sets_from($raw);
     if (!$sets) throw new ApiError(400, '보낼 곡이 없어요');
-    $now = microtime(true);
-    $live = [
-        'id' => (int)($now * 1000),
-        'title' => mb_substr(trim((string)($b['title'] ?? '')), 0, 100) ?: $sets[0]['title'],
-        'date' => valid_date($b['date'] ?? null),
-        'sets' => $sets,
-        'songs' => array_merge(...array_column($sets, 'songs')),   // 예전 화면용 (한 줄로)
-        'started_ts' => (int)$now,
-        'started_at' => date('H:i', (int)$now),
-    ];
-    state_set('live', json_encode($live, JSON_UNESCAPED_UNICODE));
-    return ['live' => $live];
+    $joined = false;
+    $token = null;
+    $live = live_update(function (?array $live) use ($b, $sets, &$joined, &$token) {
+        if ($live) {
+            $joined = true;
+            return live_append($live, $sets);
+        }
+        $token = bin2hex(random_bytes(16));
+        $now = microtime(true);
+        return [
+            'id' => (int)($now * 1000),
+            'title' => mb_substr(trim((string)($b['title'] ?? '')), 0, 100) ?: $sets[0]['title'],
+            'date' => valid_date($b['date'] ?? null),
+            'sets' => $sets,
+            'owner' => hash('sha256', $token),
+            'started_ts' => (int)$now,
+            'started_at' => date('H:i', (int)$now),
+            'focus' => null,
+        ];
+    });
+    if ($token) {
+        setcookie(LIVE_COOKIE, $token, ['expires' => time() + LIVE_TTL_SECONDS + 3600, 'path' => '/',
+                                        'httponly' => true, 'samesite' => 'Lax', 'secure' => is_https()]);
+        $_COOKIE[LIVE_COOKIE] = $token;
+    }
+    return ['live' => live_public($live), 'joined' => $joined];
+}
+
+function live_require_editor(?array $live): array
+{
+    if (!$live) throw new ApiError(404, '지금 진행 중인 라이브가 없어요');
+    if (!live_is_owner($live) && !can_edit(current_role())) throw new ApiError(403, '관리자만 라이브를 고칠 수 있어요');
+    return $live;
+}
+
+/** 진행 중인 라이브에 콘티 더하기 (모두의 화면 위 메뉴에 생긴다) */
+function api_add_live_set(): array
+{
+    $b = body_json();
+    $sets = live_sets_from([$b]);
+    if (!$sets) throw new ApiError(400, '더할 곡이 없어요');
+    $added = null;
+    $live = live_update(function (?array $live) use ($sets, &$added) {
+        $live = live_require_editor($live);
+        $before = count($live['sets']);
+        $live = live_append($live, $sets);
+        $added = count($live['sets']) > $before ? end($live['sets'])['key'] : null;
+        return $live;
+    });
+    return ['live' => live_public($live), 'added_key' => $added];
+}
+
+/** 📣 알림주기: 모두의 화면을 이 콘티(와 곡)로 */
+function api_live_focus(): array
+{
+    $b = body_json();
+    $key = (string)($b['key'] ?? '');
+    $song = max(0, (int)($b['song'] ?? 0));
+    $live = live_update(function (?array $live) use ($key, $song) {
+        $live = live_require_editor($live);
+        $set = null;
+        foreach ($live['sets'] as $st) if ($st['key'] === $key) $set = $st;
+        if (!$set) throw new ApiError(404, '라이브에 없는 콘티예요');
+        $live['focus'] = ['key' => $key, 'song' => min($song, count($set['songs']) - 1), 'title' => $set['title'],
+                          'ts' => (int)(microtime(true) * 1000)];
+        return $live;
+    });
+    return ['live' => live_public($live)];
 }
 
 function api_stop_live(): array
 {
-    state_set('live', null);
+    live_update(function (?array $live) {
+        if ($live && !live_is_owner($live)) throw new ApiError(403, '라이브는 처음 시작한 사람만 끝낼 수 있어요. 나가기를 눌러주세요');
+        return null;
+    });
+    setcookie(LIVE_COOKIE, '', ['expires' => time() - 3600, 'path' => '/']);
     return ['live' => null];
 }
 
