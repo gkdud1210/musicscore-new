@@ -1885,3 +1885,8 @@ a.logo { text-decoration: none; color: inherit; }
 .live-nav.prev { left: 6px; }
 .live-nav.next { right: 6px; }
 @media (hover: none) { .live-nav { display: none; } }   /* 터치 기기는 옆으로 밀어서 넘김 */
+.pending-badge.processing { background: var(--accent); color: #fff; }
+.ai-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.ai-row-sub { font-size: 12px; color: var(--text-muted); }
+.ai-btn { border-color: var(--accent); }
+.error-hint { color: #ff8a8a; }

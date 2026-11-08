@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import List, Optional
 from urllib.parse import quote
@@ -26,6 +27,7 @@ from auth import role_from_request
 from db import SCORES_DIR, get_conn, score_dir
 from ocr import (
     _norm_title,
+    analyze_page as ocr_analyze_page,
     analyze_pdf,
     build_song_meta,
     generate_thumbnail,
@@ -68,6 +70,8 @@ class ScoreSummary(BaseModel):
     songs: List[SongBrief] = []
     duplicate: bool = False   # 같은 파일을 이미 올려서 새로 저장하지 않았음
     confirmed: bool = True    # False면 업로드 후 아직 확인 전 → 검색에 안 나옴
+    status: str = "ready"     # processing(분석 중) | ready | error
+    status_detail: str = ""   # 진행 상황("3/13") 또는 오류 메시지
 
 
 class ScoreDetail(ScoreSummary):
@@ -225,6 +229,8 @@ def _row_to_summary(conn, row) -> ScoreSummary:
         conti_date=row["conti_date"],
         original_filename=row["original_filename"],
         confirmed=bool(row["confirmed"]),
+        status=row["status"],
+        status_detail=row["status_detail"],
         songs=[_song_brief(s) for s in _song_rows_for_score(conn, row["id"])],
     )
 
@@ -338,6 +344,7 @@ def upload_score(file: UploadFile = File(...)):
         raise HTTPException(400, "빈 PDF입니다")
 
     stem = os.path.splitext(os.path.basename(filename))[0]
+    page_count = doc.page_count
     file_hash = hashlib.sha256(contents).hexdigest()
     with get_conn() as conn:
         existing = conn.execute("SELECT id FROM scores WHERE file_hash = ?", (file_hash,)).fetchone()
@@ -347,40 +354,16 @@ def upload_score(file: UploadFile = File(...)):
         return get_score_summary(existing["id"]).model_copy(update={"duplicate": True})
 
     try:
-        # 1) 오래 걸리는 분석은 DB를 건드리기 전에 끝낸다 (잠금 없이)
-        try:
-            pages = analyze_pdf(doc)
-        except Exception as e:
-            logger.warning(f"곡 분석 실패, 페이지 단위로만 등록: {e}")
-            pages = None
-
-        # 2) 저장은 짧은 트랜잭션 한 번으로
         with get_conn() as conn:
             cur = conn.execute(
-                "INSERT INTO scores (title, original_filename, page_count, conti_date, file_hash, confirmed)"
-                " VALUES (?, ?, ?, ?, ?, 0)",
-                (stem, filename, doc.page_count, guess_date_from_filename(stem), file_hash),
+                "INSERT INTO scores (title, original_filename, page_count, conti_date, file_hash, confirmed,"
+                " status, status_detail) VALUES (?, ?, ?, ?, ?, 0, 'processing', '대기 중')",
+                (stem, filename, page_count, guess_date_from_filename(stem), file_hash),
             )
             score_id = cur.lastrowid
-            d = score_dir(score_id)
-            with open(os.path.join(d, "original.pdf"), "wb") as f:
+            with open(os.path.join(score_dir(score_id), "original.pdf"), "wb") as f:
                 f.write(contents)
-            if pages is not None:
-                _analyze_and_store(conn, score_id, doc, pages)
-                if not guess_date_from_filename(stem):
-                    # 파일명에 날짜가 없으면 첫 페이지(표지/순서지) 글자에서 찾아본다
-                    first = next((p for p in pages if p["page_number"] == 1), None)
-                    if first:
-                        d_guess = guess_date_from_filename(f"{first['title_guess'] or ''}\n{first['lyrics_text']}")
-                        if d_guess:
-                            conn.execute("UPDATE scores SET conti_date = ? WHERE id = ?", (d_guess, score_id))
-            else:
-                # 분석이 실패해도 콘티는 남기고, 페이지마다 곡 1개로 등록해 수동 보정할 수 있게 한다
-                for n in range(1, doc.page_count + 1):
-                    conn.execute("INSERT INTO songs (score_id, page_start, page_end) VALUES (?, ?, ?)",
-                                 (score_id, n, n))
             conn.commit()
-
         try:
             generate_thumbnail(doc, os.path.join(score_dir(score_id), "thumbnail.png"))
         except Exception as e:
@@ -388,9 +371,86 @@ def upload_score(file: UploadFile = File(...)):
     finally:
         doc.close()
 
-    summary = get_score_summary(score_id)
-    logger.info(f"📚 콘티 업로드: [{score_id}] {stem} ({summary.page_count}p, 곡 {len(summary.songs)}개)")
-    return summary
+    # 분석(스캔본은 몇 분)은 백그라운드에서 — Cloudflare가 100초 넘는 요청을 끊기 때문에
+    # 바로 응답하고, 화면은 status 가 processing 이 아닐 때까지 확인한다
+    enqueue_analysis(score_id, "ocr", first_upload=True)
+    logger.info(f"📚 콘티 업로드: [{score_id}] {stem} ({page_count}p) → 분석 대기")
+    return get_score_summary(score_id)
+
+
+# ═══════════════════════════════════════════════════════════════
+#   백그라운드 분석 (OCR / Claude AI) — 한 번에 하나씩 차례대로
+# ═══════════════════════════════════════════════════════════════
+
+_analysis_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="analyze")
+
+
+def _set_status(score_id: int, status: str, detail: str = ""):
+    with get_conn() as conn:
+        conn.execute("UPDATE scores SET status = ?, status_detail = ? WHERE id = ?", (status, detail[:300], score_id))
+        conn.commit()
+
+
+def enqueue_analysis(score_id: int, engine: str = "ocr", first_upload: bool = False):
+    _set_status(score_id, "processing", "대기 중")
+    _analysis_pool.submit(_run_analysis, score_id, engine, first_upload)
+
+
+def _run_analysis(score_id: int, engine: str, first_upload: bool):
+    label = "AI 인식" if engine == "ai" else "인식"
+    try:
+        doc = fitz.open(_pdf_path(score_id))
+    except Exception as e:
+        logger.error(f"[{score_id}] PDF 열기 실패: {e}")
+        _set_status(score_id, "error", f"PDF를 열 수 없어요: {e}")
+        return
+    try:
+        n = doc.page_count
+        progress = lambda done, total: _set_status(score_id, "processing", f"{label} {done}/{total}쪽")
+        if engine == "ai":
+            from ai_ocr import analyze_pdf_ai
+            _set_status(score_id, "processing", f"{label} 준비 중")
+            pages = analyze_pdf_ai(doc, progress)
+        else:
+            pages = []
+            for i in range(n):
+                progress(i, n)
+                pages.append(ocr_analyze_page(doc, i))
+        _clear_page_cache(score_id)
+        with get_conn() as conn:
+            _analyze_and_store(conn, score_id, doc, pages)
+            row = conn.execute("SELECT title, conti_date FROM scores WHERE id = ?", (score_id,)).fetchone()
+            if first_upload and row and not row["conti_date"] and pages:
+                # 파일명에 날짜가 없으면 첫 페이지(표지/순서지) 글자에서 찾아본다
+                p1 = pages[0]
+                d_guess = guess_date_from_filename(f"{p1['title_guess'] or ''}\n{p1['lyrics_text']}")
+                if d_guess:
+                    conn.execute("UPDATE scores SET conti_date = ? WHERE id = ?", (d_guess, score_id))
+            conn.execute("UPDATE scores SET status = 'ready', status_detail = '' WHERE id = ?", (score_id,))
+            conn.commit()
+        logger.info(f"📚 [{score_id}] {label} 완료 ({n}p)")
+    except Exception as e:
+        logger.exception(f"[{score_id}] {label} 실패")
+        with get_conn() as conn:
+            if not conn.execute("SELECT 1 FROM songs WHERE score_id = ?", (score_id,)).fetchone():
+                # 분석이 실패해도 콘티는 남기고, 페이지마다 곡 1개로 등록해 수동 보정할 수 있게 한다
+                for p in range(1, doc.page_count + 1):
+                    conn.execute("INSERT INTO songs (score_id, page_start, page_end) VALUES (?, ?, ?)",
+                                 (score_id, p, p))
+            conn.execute("UPDATE scores SET status = 'error', status_detail = ? WHERE id = ?",
+                         (f"{label} 실패: {e}"[:300], score_id))
+            conn.commit()
+    finally:
+        doc.close()
+
+
+def resume_pending_analysis():
+    """서버가 분석 도중에 다시 켜졌으면 하던 분석을 다시 시작한다."""
+    with get_conn() as conn:
+        ids = [r["id"] for r in conn.execute("SELECT id FROM scores WHERE status = 'processing'")]
+    for sid in ids:
+        logger.info(f"[{sid}] 끊긴 분석 다시 시작")
+        enqueue_analysis(sid, "ocr", first_upload=True)
 
 
 @router.get("/scores", response_model=List[ScoreSummary])
@@ -456,22 +516,26 @@ def delete_score(score_id: int):
 
 
 @router.post("/scores/{score_id}/reprocess", response_model=ScoreSummary)
-def reprocess_score(score_id: int):
-    """콘티를 처음부터 다시 분석 (곡 분리/제목/키를 수동으로 고친 내용은 사라진다)."""
-    get_score_row(score_id)
-    path = _pdf_path(score_id)
-    if not os.path.isfile(path):
+def reprocess_score(score_id: int, engine: str = Query("ocr", pattern="^(ocr|ai)$")):
+    """콘티를 처음부터 다시 분석 (곡 분리/제목/키를 수동으로 고친 내용은 사라진다).
+    engine=ai 면 Claude로 읽는다 (ANTHROPIC_API_KEY 필요). 백그라운드에서 돌고 바로 응답한다."""
+    row = get_score_row(score_id)
+    if row["status"] == "processing":
+        raise HTTPException(409, "이미 분석 중이에요. 끝날 때까지 기다려주세요")
+    if not os.path.isfile(_pdf_path(score_id)):
         raise HTTPException(404, "PDF 파일을 찾을 수 없습니다")
-    _clear_page_cache(score_id)
-    doc = fitz.open(path)
-    try:
-        pages = analyze_pdf(doc)  # 잠금 없이 먼저 분석
-        with get_conn() as conn:
-            _analyze_and_store(conn, score_id, doc, pages)
-            conn.commit()
-    finally:
-        doc.close()
+    if engine == "ai":
+        from ai_ocr import ai_available
+        if not ai_available():
+            raise HTTPException(400, "AI 인식을 쓰려면 서버에 Claude API 키(ANTHROPIC_API_KEY)를 넣어야 해요")
+    enqueue_analysis(score_id, engine)
     return get_score_summary(score_id)
+
+
+@router.get("/ai-status")
+def ai_status():
+    from ai_ocr import ai_available
+    return {"available": ai_available()}
 
 
 # ═══════════════════════════════════════════════════════════════

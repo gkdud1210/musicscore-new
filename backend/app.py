@@ -69,10 +69,11 @@ logger.info("🔒 비밀번호 로그인 사용" if auth_enabled() else "🔓 �
 
 # ── 악보 라이브러리 (PDF 업로드/OCR/필기) ─────────────────────
 from db import init_db
-from library import router as library_router
+from library import resume_pending_analysis, router as library_router
 
 init_db()
 app.include_router(library_router, prefix="/api")
+resume_pending_analysis()
 
 # ── 즐겨찾기 표시 / 라이브 모드(NOW) ─────────────────────────
 from extras import init_extras_db, router as extras_router

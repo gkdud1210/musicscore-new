@@ -122,6 +122,14 @@ async function refreshAll() {
   LibState.facets = facets;
   LibState.contis = contis;
   await loadMarks();
+  // 분석 중인 콘티가 있으면 몇 초 뒤 목록을 다시 불러온다 (업로드 창을 닫았어도 끝나면 반영)
+  clearTimeout(LibState.listPoll);
+  if (contis.some(c => c.status === 'processing') && !UploadQueue.running) {
+    LibState.listPoll = setTimeout(() => { if (!LibState.modal) refreshAll(); }, 5000);
+  }
+  if (AuthState.canEdit && LibState.aiAvailable === undefined) {
+    apiJson('/api/ai-status').then(r => { LibState.aiAvailable = !!r.available; }).catch(() => {});
+  }
   document.getElementById('libraryOffline').classList.add('hidden');
   switchTab(LibState.tab);
   try {
@@ -507,7 +515,7 @@ function renderContis() {
     <div class="conti-row${c.confirmed ? '' : ' pending'}">
       <div class="conti-thumb lib-card-thumb" data-action="open-conti" data-id="${c.id}">${img(c.thumbnail_url, c.title)}</div>
       <div class="conti-info">
-        <p class="conti-title" data-action="open-conti" data-id="${c.id}">${c.confirmed ? '' : '<span class="pending-badge">확인 필요</span> '}${escapeHtml(c.title)}</p>
+        <p class="conti-title" data-action="open-conti" data-id="${c.id}">${c.status === 'processing' ? `<span class="pending-badge processing">분석 중 ${escapeHtml(c.status_detail || '')}</span> ` : c.confirmed ? '' : '<span class="pending-badge">확인 필요</span> '}${escapeHtml(c.title)}</p>
         <p class="song-meta">${c.conti_date ? `📅 ${escapeHtml(c.conti_date)} · ` : ''}${c.songs.length}곡 · ${c.page_count}페이지</p>
         <div class="conti-songs">
           ${c.songs.map((s, i) => `<span class="conti-song-chip">${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</span>`).join('')
@@ -557,8 +565,29 @@ async function reloadContiModal() {
   }
 }
 
+function renderContiProcessing(conti) {
+  document.getElementById('libModalBody').innerHTML = `
+    <h2 class="lib-modal-title">${escapeHtml(conti.title)}</h2>
+    <div class="lib-upload-progress">
+      <div class="lib-upload-spinner"></div>
+      <div>
+        <p class="lib-upload-progress-title">분석하는 중이에요 · ${escapeHtml(conti.status_detail || '')}</p>
+        <p class="lib-upload-progress-sub">끝나면 이 화면이 저절로 바뀌어요. 창을 닫아도 분석은 계속돼요.</p>
+      </div>
+    </div>`;
+  const id = conti.id;
+  clearTimeout(LibState.modalPoll);
+  LibState.modalPoll = setTimeout(() => {
+    if (LibState.modal?.type === 'conti' && LibState.modal.id === id) {
+      LibState.modalDirty = true;
+      reloadContiModal();
+    }
+  }, 3000);
+}
+
 function renderContiModal(conti, songs) {
   songs.sort((a, b) => a.page_start - b.page_start);
+  if (conti.status === 'processing') { renderContiProcessing(conti); return; }
   if (!AuthState.canEdit) { renderContiModalReadOnly(conti, songs); return; }
   const pageToSong = new Map();
   songs.forEach(s => { for (let p = s.page_start; p <= s.page_end; p++) pageToSong.set(p, s); });
@@ -598,6 +627,13 @@ function renderContiModal(conti, songs) {
       자동으로 나눈 곡이 틀렸다면 여기서 고쳐주세요. 표지·순서지 페이지는 "곡에서 빼기"를 누르면 검색에 안 나와요.
       <button class="btn-link" data-action="reprocess" data-id="${conti.id}">처음부터 다시 분석</button>
     </p>
+    ${conti.status === 'error' ? `<p class="conti-hint error-hint">⚠️ ${escapeHtml(conti.status_detail)}</p>` : ''}
+    <div class="ai-row">
+      ${LibState.aiAvailable
+        ? `<button type="button" class="btn-sm ai-btn" data-action="reprocess-ai" data-id="${conti.id}">🤖 AI(Claude)로 다시 인식</button>
+           <span class="ai-row-sub">제목·키가 많이 틀렸을 때. 페이지마다 Claude가 읽어요 (API 사용료 발생)</span>`
+        : `<span class="ai-row-sub">🤖 인식이 잘 안 되면 서버에 Claude API 키를 넣고 "AI로 다시 인식"을 쓸 수 있어요</span>`}
+    </div>
     ${blocks.map(b => {
       if (b.orphan) {
         return `
@@ -699,6 +735,7 @@ function showModal() {
 }
 
 function closeModal() {
+  clearTimeout(LibState.modalPoll);
   document.getElementById('libModal').classList.add('hidden');
   document.body.classList.remove('modal-open');
   LibState.modal = null;
@@ -774,8 +811,12 @@ function initDelegatedActions() {
       case 'reprocess':
         if (!confirm('이 콘티를 처음부터 다시 분석할까요? 직접 고친 제목·키·곡 나누기는 사라져요.')) return;
         el.disabled = true;
-        el.textContent = '분석 중...';
-        contiAction(apiJson(`/api/scores/${id}/reprocess`, { method: 'POST' }), '다시 분석했어요');
+        contiAction(apiJson(`/api/scores/${id}/reprocess`, { method: 'POST' }), '다시 분석을 시작했어요');
+        break;
+      case 'reprocess-ai':
+        if (!confirm('Claude AI로 이 콘티를 다시 읽을까요?\n· 직접 고친 제목·키·곡 나누기는 사라져요\n· 페이지마다 Claude API 사용료가 들어요')) return;
+        el.disabled = true;
+        contiAction(apiJson(`/api/scores/${id}/reprocess?engine=ai`, { method: 'POST' }), 'AI 인식을 시작했어요');
         break;
       case 'setlist-up': moveSetlistItem(Number(el.dataset.index), -1); break;
       case 'setlist-down': moveSetlistItem(Number(el.dataset.index), 1); break;
@@ -906,6 +947,21 @@ function uploadFiles(files) {
   if (!UploadQueue.running) runUploadQueue();
 }
 
+/** 서버가 백그라운드에서 분석을 끝낼 때까지 몇 초마다 확인한다 */
+async function waitForAnalysis(conti, onProgress) {
+  let c = conti;
+  while (c.status === 'processing') {
+    onProgress?.(c.status_detail || '분석 중');
+    await new Promise(r => setTimeout(r, 3000));
+    try {
+      c = await apiJson(`/api/scores/${c.id}`);
+    } catch (e) {
+      onProgress?.('연결 확인 중...');  // 잠깐 끊겨도 계속 기다린다
+    }
+  }
+  return c;
+}
+
 const UPLOAD_STATUS = {
   wait: ['⏳', '대기'], work: ['🔄', '분석 중'], ok: ['✅', ''], dup: ['↩️', '이미 있는 콘티'], fail: ['❌', '실패'],
 };
@@ -940,11 +996,16 @@ async function runUploadQueue() {
     try {
       const fd = new FormData();
       fd.append('file', it.file);
-      const conti = await apiJson('/api/scores', { method: 'POST', body: fd });
-      it.conti = conti;
+      let conti = await apiJson('/api/scores', { method: 'POST', body: fd });
       if (conti.duplicate) {
+        it.conti = conti;
         it.status = 'dup';
       } else {
+        it.note = '올리기 완료 — 분석 시작';
+        renderUploadList();
+        conti = await waitForAnalysis(conti, detail => { it.note = detail; renderUploadList(); });
+        it.conti = conti;
+        if (conti.status === 'error') throw new Error(conti.status_detail || '분석 실패');
         it.status = 'ok';
         it.note = `곡 ${conti.songs.length}개`;
       }

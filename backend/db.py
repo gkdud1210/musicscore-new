@@ -106,6 +106,9 @@ def init_db():
         _add_column_if_missing(conn, "scores", "file_hash", "file_hash TEXT")
         # 업로드 후 관리자가 확인(컨펌)해야 검색에 나온다. 이미 있던 콘티는 확인된 것으로 둔다.
         _add_column_if_missing(conn, "scores", "confirmed", "confirmed INTEGER NOT NULL DEFAULT 1")
+        # 분석은 백그라운드에서: processing(분석 중) → ready / error. detail = 진행 상황·오류 메시지
+        _add_column_if_missing(conn, "scores", "status", "status TEXT NOT NULL DEFAULT 'ready'")
+        _add_column_if_missing(conn, "scores", "status_detail", "status_detail TEXT NOT NULL DEFAULT ''")
 
 
 def score_dir(score_id: int) -> str:
