@@ -16,11 +16,22 @@ SCORES_DIR = os.path.join(STORAGE_DIR, "scores")
 DB_PATH = os.path.join(STORAGE_DIR, "library.db")
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """`with get_conn() as conn:` 블록이 끝나면 커밋/롤백 후 연결까지 닫는다.
+    (기본 sqlite3 연결은 with가 끝나도 닫히지 않아 연결이 계속 쌓인다)"""
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
+
+
 def get_conn() -> sqlite3.Connection:
     """요청마다 새로 여는 연결. sqlite3 커넥션은 스레드 간 공유가 안전하지 않고,
     FastAPI의 동기 핸들러는 스레드풀에서 돌기 때문에 매번 새로 연다."""
     os.makedirs(STORAGE_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+    # 다른 요청이 쓰는 중이면 최대 30초까지 기다린다
+    conn = sqlite3.connect(DB_PATH, timeout=30, factory=_ClosingConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")

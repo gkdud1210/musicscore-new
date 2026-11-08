@@ -275,9 +275,14 @@ def _insert_song(conn, score_id: int, start: int, end: int) -> int:
     return cur.lastrowid
 
 
-def _analyze_and_store(conn, score_id: int, doc: "fitz.Document"):
-    """페이지 분석 → pages 저장 → 곡 분리 → songs 저장. 기존 pages/songs는 지운다."""
-    pages = analyze_pdf(doc)
+def _analyze_and_store(conn, score_id: int, doc: "fitz.Document", pages=None):
+    """페이지 분석 → pages 저장 → 곡 분리 → songs 저장. 기존 pages/songs는 지운다.
+
+    OCR(analyze_pdf)은 스캔본이면 몇 분 걸린다. 그동안 DB 쓰기 잠금을 잡고 있으면
+    다른 요청(곡 이름 수정, 다른 업로드)이 전부 'database is locked'로 실패하므로,
+    호출하는 쪽에서 쓰기 전에 미리 분석해서 pages로 넘긴다."""
+    if pages is None:
+        pages = analyze_pdf(doc)
     conn.execute("DELETE FROM pages WHERE score_id = ?", (score_id,))
     conn.execute("DELETE FROM songs WHERE score_id = ?", (score_id,))
     conn.execute("DELETE FROM score_chords WHERE score_id = ?", (score_id,))
@@ -335,6 +340,14 @@ def upload_score(file: UploadFile = File(...)):
         return get_score_summary(existing["id"]).model_copy(update={"duplicate": True})
 
     try:
+        # 1) 오래 걸리는 분석은 DB를 건드리기 전에 끝낸다 (잠금 없이)
+        try:
+            pages = analyze_pdf(doc)
+        except Exception as e:
+            logger.warning(f"곡 분석 실패, 페이지 단위로만 등록: {e}")
+            pages = None
+
+        # 2) 저장은 짧은 트랜잭션 한 번으로
         with get_conn() as conn:
             cur = conn.execute(
                 "INSERT INTO scores (title, original_filename, page_count, conti_date, file_hash) VALUES (?, ?, ?, ?, ?)",
@@ -344,20 +357,17 @@ def upload_score(file: UploadFile = File(...)):
             d = score_dir(score_id)
             with open(os.path.join(d, "original.pdf"), "wb") as f:
                 f.write(contents)
-            try:
-                _analyze_and_store(conn, score_id, doc)
+            if pages is not None:
+                _analyze_and_store(conn, score_id, doc, pages)
                 if not guess_date_from_filename(stem):
                     # 파일명에 날짜가 없으면 첫 페이지(표지/순서지) 글자에서 찾아본다
-                    first = conn.execute(
-                        "SELECT title_guess, lyrics_text FROM pages WHERE score_id = ? AND page_number = 1",
-                        (score_id,)).fetchone()
+                    first = next((p for p in pages if p["page_number"] == 1), None)
                     if first:
                         d_guess = guess_date_from_filename(f"{first['title_guess'] or ''}\n{first['lyrics_text']}")
                         if d_guess:
                             conn.execute("UPDATE scores SET conti_date = ? WHERE id = ?", (d_guess, score_id))
-            except Exception as e:
+            else:
                 # 분석이 실패해도 콘티는 남기고, 페이지마다 곡 1개로 등록해 수동 보정할 수 있게 한다
-                logger.warning(f"곡 분석 실패, 페이지 단위로만 등록: {e}")
                 for n in range(1, doc.page_count + 1):
                     conn.execute("INSERT INTO songs (score_id, page_start, page_end) VALUES (?, ?, ?)",
                                  (score_id, n, n))
@@ -434,8 +444,9 @@ def reprocess_score(score_id: int):
     _clear_page_cache(score_id)
     doc = fitz.open(path)
     try:
+        pages = analyze_pdf(doc)  # 잠금 없이 먼저 분석
         with get_conn() as conn:
-            _analyze_and_store(conn, score_id, doc)
+            _analyze_and_store(conn, score_id, doc, pages)
             conn.commit()
     finally:
         doc.close()
