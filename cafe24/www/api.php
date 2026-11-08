@@ -66,6 +66,7 @@ $ROUTES = [
     ['POST', '#^/live/sets$#', 'api_add_live_set', 'member_ok'],
     ['POST', '#^/live/focus$#', 'api_live_focus', 'member_ok'],
     ['POST', '#^/live/message$#', 'api_live_message', 'member_ok'],
+    ['POST', '#^/live/invite$#', 'api_live_invite', 'member_ok'],
     ['GET', '#^/quick-messages$#', 'api_get_quick_messages', 'member'],
     ['PUT', '#^/quick-messages$#', 'api_put_quick_messages', 'admin'],
     ['GET', '#^/people$#', 'api_get_people', 'admin'],

@@ -899,7 +899,9 @@ function api_start_live(): array
     $live = live_update(function (?array $live) use ($b, $sets, &$joined, &$token) {
         if ($live) {
             $joined = true;
-            return live_append($live, $sets);
+            $live = live_append($live, $sets);
+            $live['invite'] = live_invite_now();   // 다시 시작하면 = 모두 다시 초대
+            return $live;
         }
         $token = bin2hex(random_bytes(16));
         $now = microtime(true);
@@ -946,6 +948,22 @@ function api_add_live_set(): array
     return ['live' => live_public($live), 'added_key' => $added];
 }
 
+function live_invite_now(): array
+{
+    return ['ts' => (int)(microtime(true) * 1000), 'from' => sender_name()];
+}
+
+/** 📨 다시 초대: 나갔던 사람들까지 모두에게 다시 알림이 가고, OKAY 하면 들어온다 */
+function api_live_invite(): array
+{
+    $live = live_update(function (?array $live) {
+        if (!$live) throw new ApiError(404, '지금 진행 중인 라이브가 없어요');
+        $live['invite'] = live_invite_now();
+        return $live;
+    });
+    return ['live' => live_public($live)];
+}
+
 /** 📣 알림주기: 모두의 화면을 이 콘티(와 곡)로 */
 function api_live_focus(): array
 {
@@ -953,7 +971,7 @@ function api_live_focus(): array
     $key = (string)($b['key'] ?? '');
     $song = max(0, (int)($b['song'] ?? 0));
     $live = live_update(function (?array $live) use ($key, $song) {
-        $live = live_require_editor($live);
+        if (!$live) throw new ApiError(404, '지금 진행 중인 라이브가 없어요');   // 팀원 누구나
         $set = null;
         foreach ($live['sets'] as $st) if ($st['key'] === $key) $set = $st;
         if (!$set) throw new ApiError(404, '라이브에 없는 콘티예요');
@@ -977,7 +995,7 @@ function api_live_message(): array
     $fromKey = recipient_key();
     $live = live_update(function (?array $live) use ($text, $from, $to, $fromKey) {
         if (!$live) throw new ApiError(404, '지금 진행 중인 라이브가 없어요');
-        if (!live_is_owner($live) && !can_message()) throw new ApiError(403, '메세지는 관리자나 자기 입장코드로 들어온 사람만 보낼 수 있어요');
+        if (!can_message()) throw new ApiError(403, '로그인한 사람만 메세지를 보낼 수 있어요');
         $live['message'] = ['text' => $text, 'from' => $from, 'from_key' => $fromKey, 'to' => $to, 'ts' => (int)(microtime(true) * 1000)];
         return $live;
     });

@@ -159,11 +159,10 @@ function api_me(): array
     ];
 }
 
-/** 라이브 메세지를 보낼 수 있는 사람: 관리자, 또는 자기 입장코드로 들어온 사람 */
+/** 라이브 메세지·알림주기: 로그인한 팀원 누구나 */
 function can_message(): bool
 {
-    $u = current_user();
-    return $u && (can_edit($u['role']) || $u['name'] !== '');
+    return current_user() !== null;
 }
 
 /** 메세지에 붙일 보낸 사람 이름 */
@@ -172,7 +171,8 @@ function sender_name(): string
     $u = current_user();
     if (!$u) return '';
     if ($u['name'] !== '') return $u['name'];
-    return $u['role'] === 'admin' && auth_enabled() ? '관리자' : '';
+    if (!auth_enabled()) return '';
+    return $u['role'] === 'admin' ? '관리자' : '팀원';
 }
 
 // ── 입장코드 관리 (관리자) ──

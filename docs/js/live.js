@@ -3,7 +3,8 @@
  * - 누가 📡 라이브를 시작하면 서버에 올라가고, 접속한 사람들은 몇 초마다 확인하다 깜빡이는 알림을 받는다.
  * - 라이브가 켜져 있는 동안 관리자는 누구나 ＋ 콘티로 콘티를 더할 수 있고, 모두의 위 메뉴에 같이 생긴다.
  * - 📣 알림주기: 지금 보고 있는 콘티(곡)로 모두의 화면이 넘어간다.
- * - 끝내기는 처음 시작한 기기만. 다른 사람은 🚪 나가기(내 화면만 닫고 알림도 그만).
+ * - 라이브 화면에는 끝내기가 없고 모두 🚪 나가기(내 화면만). 끝내기는 예배 라이브 셋팅에서 시작한 사람만.
+ * - 📨 다시 초대: 나갔던 사람까지 다시 알림, OKAY 하면 들어온다.
  * 사용자 데이터는 escapeHtml을 거쳐서만 innerHTML에 넣는다.
  */
 
@@ -26,6 +27,14 @@ function focusSeenTs(live) {
 }
 function setFocusSeen(live) {
   if (live?.focus) lsSet(LIVE_FOCUS_KEY, `${live.id}:${live.focus.ts}`);
+}
+const LIVE_INVITE_KEY = 'jandi.live.invite';
+function inviteSeenTs(live) {
+  const [id, ts] = lsGet(LIVE_INVITE_KEY).split(':');
+  return live && id === String(live.id) ? Number(ts) || 0 : 0;
+}
+function setInviteSeen(live) {
+  if (live?.invite) lsSet(LIVE_INVITE_KEY, `${live.id}:${live.invite.ts}`);
 }
 const normQ = t => String(t || '').toLowerCase().normalize('NFC').replace(/\s+/g, '');
 
@@ -63,6 +72,11 @@ function applyLive(live) {
   if (watching && V.rev !== live.rev) syncLiveViewer(live);
 
   const newFocus = live.focus && live.focus.ts > focusSeenTs(live);
+  const newInvite = live.invite && live.invite.ts > inviteSeenTs(live);
+  if (newInvite) {
+    if (watching || LiveState.sentInviteTs === live.invite.ts) setInviteSeen(live);
+    else { showLiveAlert(live, 'invite'); return; }   // 나갔던 사람도 다시 초대받는다
+  }
   if (liveLeft(live)) {             // 나간 사람에게는 알리지 않는다
     if (newFocus) setFocusSeen(live);
     return;
@@ -126,6 +140,8 @@ async function stopLive() {
     LiveState.live = null;
     renderLiveIndicator();
     closeLiveViewer();
+    showToast('라이브를 끝냈어요.', 'success');
+    if (typeof renderWorshipSetup === 'function' && LibState?.modal?.type === 'worship') renderWorshipSetup();
   } catch (e) {
     showToast('실패: ' + e.message, 'error');
   }
@@ -140,7 +156,7 @@ function leaveLive() {
   }
   hideLiveAlert();
   closeLiveViewer();
-  showToast('라이브에서 나왔어요. 아래 LIVE 표시를 누르면 다시 들어갈 수 있어요.', 'info', 4000);
+  showToast('라이브에서 나왔어요. 라이브는 다른 사람들에게 계속돼요. 아래 LIVE 를 누르면 다시 들어가고, 📨 다시 초대로 모두를 다시 부를 수 있어요.', 'info', 5000);
 }
 
 /** 📣 알림주기: 지금 보고 있는 콘티·곡으로 모두의 화면을 넘긴다 */
@@ -186,7 +202,14 @@ function showLiveAlert(live, focus = false) {
     document.body.appendChild(el);
   }
   const sets = liveSetsOf(live);
-  el.innerHTML = focus ? `
+  el.innerHTML = focus === 'invite' ? `
+    <span class="live-dot"></span>
+    <div class="live-alert-text">
+      <strong>📨 ${live.invite.from ? `${escapeHtml(live.invite.from)}님이 ` : ''}라이브에 초대했어요</strong>
+      <span>${escapeHtml(live.title)} · OKAY 를 누르면 바로 들어가요</span>
+    </div>
+    <button type="button" class="live-ok-btn" data-live="ok">OKAY</button>
+    <button type="button" class="live-alert-x" data-live="dismiss" aria-label="나중에">×</button>` : focus ? `
     <span class="live-dot"></span>
     <div class="live-alert-text">
       <strong>📣 지금 이 콘티 · ${escapeHtml(live.focus.title)}</strong>
@@ -205,7 +228,7 @@ function showLiveAlert(live, focus = false) {
   try { navigator.vibrate?.([200, 100, 200]); } catch { /* 진동 없음 */ }
   clearInterval(LiveState.titleTimer);
   let on = false;
-  const label = focus ? '📣 ' + live.focus.title : '🔴 NOW · ' + live.title;
+  const label = focus === 'invite' ? '📨 라이브 초대 · ' + live.title : focus ? '📣 ' + live.focus.title : '🔴 NOW · ' + live.title;
   LiveState.titleTimer = setInterval(() => {
     on = !on;
     document.title = on ? label : LiveState.originalTitle;
@@ -224,15 +247,28 @@ function renderLiveIndicator() {
   const live = LiveState.live;
   if (!live) { el?.remove(); return; }
   if (!el) {
-    el = document.createElement('button');
+    el = document.createElement('div');
     el.id = 'liveIndicator';
-    el.type = 'button';
     el.className = 'live-indicator';
-    el.dataset.live = 'open';
     document.body.appendChild(el);
   }
-  el.innerHTML = `<span class="live-dot"></span> LIVE · ${escapeHtml(live.title)}`;
+  el.innerHTML = `<button type="button" class="live-ind-open" data-live="open"><span class="live-dot"></span> LIVE · ${escapeHtml(live.title)}</button>
+    <button type="button" class="live-ind-invite" data-live="invite" title="모두에게 다시 초대 알림을 보내고 들어가요">📨 다시 초대</button>`;
   el.classList.toggle('hidden', LiveState.viewerOpen);
+}
+
+/** 📨 다시 초대: 나갔던 사람까지 모두에게 알림 → OKAY 하면 들어온다. 나는 바로 들어간다 */
+async function inviteLive() {
+  try {
+    const { live } = await apiJson('/api/live/invite', { method: 'POST' });
+    LiveState.sentInviteTs = live.invite.ts;
+    setInviteSeen(live);
+    LiveState.live = live;
+    openLiveViewer();
+    showToast('📨 모두에게 다시 초대를 보냈어요.', 'success');
+  } catch (e) {
+    showToast('초대 실패: ' + e.message, 'error');
+  }
 }
 
 /* ── 라이브 화면: 위 메뉴에서 콘티를 오가며, 악보를 옆으로 넘겨 보기 ─────────────── */
@@ -255,6 +291,7 @@ function openLiveViewer(local = null) {
   if (!live) return;
   if (!local) {
     setLiveSeen(live.id);
+    setInviteSeen(live);
     lsSet(LIVE_LEFT_KEY, '');
     hideLiveAlert();
   }
@@ -345,12 +382,11 @@ function renderLiveSet() {
     <div class="live-top">
       <span class="live-badge"><span class="live-dot"></span> ${V.local ? '보기' : 'LIVE'}</span>
       <div class="live-now" id="liveNow"></div>
-      ${server && live.can_edit ? '<button type="button" class="live-top-btn notify" data-live="notify" title="지금 보고 있는 콘티·곡으로 모두의 화면을 넘겨요">📣 알림주기</button>' : ''}
-      ${server && (live.can_edit || live.can_msg) ? '<button type="button" class="live-top-btn msg" data-live="msg" title="라이브 보는 모두의 악보 위에 메세지 띄우기">💬 메세지</button>' : ''}
+      ${server ? '<button type="button" class="live-top-btn notify" data-live="notify" title="지금 보고 있는 콘티·곡으로 모두의 화면을 넘겨요">📣 알림주기</button>' : ''}
+      ${server ? '<button type="button" class="live-top-btn msg" data-live="msg" title="라이브 보는 모두의 악보 위에 메세지 띄우기">💬 메세지</button>' : ''}
       <button type="button" class="live-top-btn" data-live="fullscreen" title="전체 화면">⛶</button>
       ${!server ? '<button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>'
-        : live.mine ? '<button type="button" class="live-top-btn" data-live="stop" title="라이브 끝내기 (모두)">■ 끝내기</button><button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>'
-        : '<button type="button" class="live-top-btn" data-live="leave" title="내 화면만 닫아요. 라이브는 계속돼요">🚪 나가기</button>'}
+        : '<button type="button" class="live-top-btn" data-live="leave" title="내 화면만 닫아요. 라이브는 다른 사람들에게 계속돼요">🚪 나가기</button>'}
     </div>
     <div class="live-sets" id="liveSets" role="tablist" aria-label="콘티"></div>
     <div class="live-add hidden" id="liveAdd"></div>
@@ -686,7 +722,8 @@ async function loadRecipients() {
   if (LiveState.recipients) return;
   try {
     const r = await apiJson('/api/live/recipients');
-    LiveState.recipients = r.recipients.filter(x => x.key !== r.me);   // 나는 빼고
+    // 나는 빼고 (관리자·팀원 공용은 같은 코드를 쓰는 다른 사람이 있으니 그대로)
+    LiveState.recipients = r.recipients.filter(x => x.key !== r.me || x.key === 'admin' || x.key === 'team');
   } catch { LiveState.recipients = []; }
   LiveState.msgTo = new Set(LiveState.recipients.map(x => x.key));
 }
@@ -765,6 +802,7 @@ document.addEventListener('click', e => {
       break;
     }
     case 'open': openLiveViewer(); break;
+    case 'invite': inviteLive(); break;
     case 'leave': leaveLive(); break;
     case 'msg': openLiveMsgPanel(); break;
     case 'msg-panel': document.getElementById('liveMsgPanel')?.classList.add('hidden'); openLiveMsgPanel(); break;
@@ -786,7 +824,7 @@ document.addEventListener('click', e => {
     case 'quick-save': saveQuickMessages(); break;
     case 'notify': notifyLive(); break;
     case 'dismiss':
-      if (LiveState.live) { setLiveSeen(LiveState.live.id); setFocusSeen(LiveState.live); }
+      if (LiveState.live) { setLiveSeen(LiveState.live.id); setFocusSeen(LiveState.live); setInviteSeen(LiveState.live); }
       hideLiveAlert();
       break;
     case 'close': closeLiveViewer(); break;

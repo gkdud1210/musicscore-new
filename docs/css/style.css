@@ -1847,6 +1847,11 @@ a.logo { text-decoration: none; color: inherit; }
   font-weight: 800; font-size: 13px; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,.4);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.live-indicator { padding: 4px 4px 4px 6px; gap: 4px; cursor: default; }
+.live-ind-open { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  background: none; border: 0; color: #fff; font: 800 13px var(--font-main); padding: 6px 8px; cursor: pointer; white-space: nowrap; }
+.live-ind-invite { flex-shrink: 0; background: #fff; color: #c41c33; border: 0; border-radius: 999px; padding: 7px 12px;
+  font: 800 12px var(--font-main); cursor: pointer; }
 .live-indicator .live-dot { background: #fff; }
 .live-indicator.hidden { display: none; }
 .live-viewer {
@@ -2387,3 +2392,6 @@ html[data-theme="light"] .live-to-chip.on { color: #fff; border-color: #3b82f6; 
 html[data-theme="light"] .live-to-chip.all:not(.on) { color: #333; }
 html[data-theme="light"] .live-to-sum { color: #555; }
 .live-msg-form .live-top-btn { flex: none; }
+
+.ws-live-end { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0 4px;
+  padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(229,56,79,.45); background: rgba(229,56,79,.08); font-size: 13px; }

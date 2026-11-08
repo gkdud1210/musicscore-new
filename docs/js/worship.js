@@ -144,6 +144,10 @@ function renderWorshipSetup() {
       <button type="button" class="btn-sm" data-ws="preview" ${W.sets.length ? '' : 'disabled'}>👀 나만 보기</button>
       <button type="button" class="btn-now" data-ws="start" ${W.sets.length ? '' : 'disabled'}>📡 ${LiveState.live ? '진행 중인 라이브에 더하기' : '라이브 시작'} · ${W.sets.length}콘티 ${totalSongs}곡</button>
     </div>
+    ${LiveState.live?.mine ? `<div class="ws-live-end">
+      <span>🔴 지금 <b>${escapeHtml(LiveState.live.title)}</b> 라이브 진행 중 · 내가 시작했어요</span>
+      <button type="button" class="btn-sm danger" data-live="stop">■ 라이브 완전히 끝내기 (모두)</button>
+    </div>` : ''}
 
     <h3 class="song-section-title">＋ 콘티 추가</h3>
     ${favs.length ? `<p class="ws-sub">⭐ 즐겨찾기 콘티 <small>${favs.length}</small></p><div class="ws-favs">${favs.map(c => contiRow(c)).join('')}</div>` : ''}
