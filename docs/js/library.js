@@ -694,64 +694,147 @@ function initUpload() {
   });
 
   const zone = document.getElementById('dropzone');
+  const box = document.getElementById('dropbox');
   let depth = 0;
   const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
-  const canUpload = e => hasFiles(e) && AuthState.canEdit;
-  window.addEventListener('dragenter', e => { if (canUpload(e)) { depth++; zone.classList.remove('hidden'); } });
-  window.addEventListener('dragleave', e => { if (hasFiles(e) && --depth <= 0) { depth = 0; zone.classList.add('hidden'); } });
-  window.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
-  window.addEventListener('drop', e => {
+  const hide = () => { depth = 0; zone.classList.add('hidden'); box?.classList.remove('drag-over'); };
+  window.addEventListener('dragenter', e => {
+    if (!hasFiles(e) || !AuthState.canEdit) return;
+    depth++;
+    zone.classList.remove('hidden');
+    box?.classList.add('drag-over');
+  });
+  window.addEventListener('dragleave', e => { if (hasFiles(e) && --depth <= 0) hide(); });
+  window.addEventListener('dragover', e => {
     if (!hasFiles(e)) return;
-    if (!AuthState.canEdit) { e.preventDefault(); showToast('업로드는 관리자만 할 수 있어요.', 'info'); return; }
+    e.preventDefault();  // 이게 없으면 브라우저가 PDF를 새 창으로 열어버린다
+    e.dataTransfer.dropEffect = AuthState.canEdit ? 'copy' : 'none';
+  });
+  window.addEventListener('drop', async e => {
+    if (!hasFiles(e)) return;
     e.preventDefault();
-    depth = 0;
-    zone.classList.add('hidden');
-    uploadFiles([...e.dataTransfer.files]);
+    hide();
+    if (!AuthState.canEdit) { showToast('업로드는 관리자만 할 수 있어요.', 'info'); return; }
+    uploadFiles(await filesFromDrop(e.dataTransfer));
   });
 }
 
-async function uploadFiles(files) {
-  const pdfs = files.filter(f => f.name.toLowerCase().endsWith('.pdf'));
+/* 끌어다 놓은 것에서 파일을 모은다 — 폴더를 놓으면 안에 든 파일까지 (하위 폴더 포함) */
+async function filesFromDrop(dt) {
+  // entry는 drop 이벤트 안에서 바로 꺼내야 한다 (await 뒤에는 dataTransfer가 비워짐)
+  const entries = [...(dt.items || [])]
+    .filter(it => it.kind === 'file')
+    .map(it => it.webkitGetAsEntry?.())
+    .filter(Boolean);
+  if (!entries.length || !entries.some(en => en.isDirectory)) return [...dt.files];
+
+  const out = [];
+  const readEntry = async en => {
+    if (en.isFile) {
+      out.push(await new Promise((res, rej) => en.file(res, rej)));
+    } else if (en.isDirectory) {
+      const reader = en.createReader();
+      for (;;) {  // readEntries는 한 번에 일부만 주므로 빌 때까지 반복
+        const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        if (!batch.length) break;
+        for (const child of batch) await readEntry(child);
+      }
+    }
+  };
+  for (const en of entries) {
+    try { await readEntry(en); } catch (err) { console.error(err); }
+  }
+  return out;
+}
+
+const isPdfFile = f => f.name.toLowerCase().endsWith('.pdf') || f.type === 'application/pdf';
+
+/* 업로드 대기열 — 올리는 중에 또 끌어다 놓아도 차례대로 처리한다 */
+const UploadQueue = { items: [], running: false };
+
+function uploadFiles(files) {
+  const pdfs = files.filter(isPdfFile)
+    .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }));
+  const skipped = files.length - pdfs.length;
   if (!pdfs.length) {
     if (files.length) showToast('PDF 파일만 업로드할 수 있어요.', 'error');
     return;
   }
+  if (skipped) showToast(`PDF가 아닌 파일 ${skipped}개는 건너뛰었어요.`, 'info');
+  pdfs.forEach(f => UploadQueue.items.push({ file: f, status: 'wait', note: '' }));
+  renderUploadList();
+  if (!UploadQueue.running) runUploadQueue();
+}
+
+const UPLOAD_STATUS = {
+  wait: ['⏳', '대기'], work: ['🔄', '분석 중'], ok: ['✅', ''], dup: ['↩️', '이미 있는 콘티'], fail: ['❌', '실패'],
+};
+
+function renderUploadList() {
+  const items = UploadQueue.items;
+  const done = items.filter(it => !['wait', 'work'].includes(it.status)).length;
+  const cur = items.find(it => it.status === 'work');
+  document.getElementById('uploadProgressTitle').textContent = items.length > 1
+    ? `콘티 ${items.length}개 중 ${done}개 완료${cur ? ` — "${cur.file.name}" 처리하는 중...` : ''}`
+    : `"${items[0]?.file.name || ''}" 처리하는 중...`;
+  document.getElementById('uploadFileList').innerHTML = items.length > 1
+    ? items.map(it => {
+        const [icon, label] = UPLOAD_STATUS[it.status];
+        return `<li class="up-${it.status}">${icon} <span class="up-name">${escapeHtml(it.file.name)}</span>
+          <span class="up-note">${escapeHtml(it.note || label)}</span></li>`;
+      }).join('')
+    : '';
+}
+
+async function runUploadQueue() {
+  UploadQueue.running = true;
   const progress = document.getElementById('uploadProgress');
-  const title = document.getElementById('uploadProgressTitle');
   const btn = document.getElementById('uploadTriggerBtn');
   progress.classList.remove('hidden');
   btn.disabled = true;
 
-  let ok = 0, songCount = 0, lastConti = null;
-  const failed = [], dupes = [];
-  for (let i = 0; i < pdfs.length; i++) {
-    const f = pdfs[i];
-    title.textContent = pdfs.length > 1 ? `(${i + 1}/${pdfs.length}) "${f.name}" 처리하는 중...` : `"${f.name}" 처리하는 중...`;
+  let it;
+  while ((it = UploadQueue.items.find(x => x.status === 'wait'))) {
+    it.status = 'work';
+    renderUploadList();
     try {
       const fd = new FormData();
-      fd.append('file', f);
+      fd.append('file', it.file);
       const conti = await apiJson('/api/scores', { method: 'POST', body: fd });
-      lastConti = conti;
-      if (conti.duplicate) { dupes.push(f.name); continue; }
-      ok++;
-      songCount += conti.songs.length;
+      it.conti = conti;
+      if (conti.duplicate) {
+        it.status = 'dup';
+      } else {
+        it.status = 'ok';
+        it.note = `곡 ${conti.songs.length}개`;
+      }
     } catch (e) {
       console.error(e);
-      failed.push(`${f.name}: ${e.message}`);
+      it.status = 'fail';
+      it.note = e.message;
     }
+    renderUploadList();
   }
 
+  const items = UploadQueue.items;
+  UploadQueue.items = [];
+  UploadQueue.running = false;
   progress.classList.add('hidden');
   btn.disabled = false;
-  if (ok) showToast(`콘티 ${ok}개 업로드 완료 — 곡 ${songCount}개를 찾았어요.`, 'success', 5000);
-  if (dupes.length) showToast(`이미 올린 콘티라서 다시 저장하지 않았어요: ${dupes.join(', ')}`, 'info', 6000);
-  failed.forEach(msg => showToast('업로드 실패: ' + msg, 'error', 7000));
+
+  const ok = items.filter(x => x.status === 'ok');
+  const dupes = items.filter(x => x.status === 'dup');
+  const songCount = ok.reduce((n, x) => n + x.conti.songs.length, 0);
+  if (ok.length) showToast(`콘티 ${ok.length}개 업로드 완료 — 곡 ${songCount}개를 찾았어요.`, 'success', 5000);
+  if (dupes.length) showToast(`이미 올린 콘티라서 다시 저장하지 않았어요: ${dupes.map(x => x.file.name).join(', ')}`, 'info', 6000);
+  items.filter(x => x.status === 'fail').forEach(x => showToast(`업로드 실패: ${x.file.name}: ${x.note}`, 'error', 7000));
 
   resetFilters();
-  LibState.tab = ok > 1 ? 'contis' : 'songs';
+  LibState.tab = items.length > 1 ? 'contis' : 'songs';
   await refreshAll();
   // 파일 하나를 올렸으면 그 콘티의 곡들을 바로 보여준다 (여러 개면 콘티 목록 탭)
-  if (lastConti && pdfs.length === 1) openContiModal(lastConti.id);
+  const last = items.length === 1 ? items[0].conti : null;
+  if (last) openContiModal(last.id);
 }
 
 /* ============================================================

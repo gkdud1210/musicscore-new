@@ -18,7 +18,7 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="css/style.css?v=4" />
+  <link rel="stylesheet" href="css/style.css?v=5" />
 </head>
 <body>
   <div class="bg-particles" id="bgParticles"></div>
@@ -68,7 +68,11 @@
         </button>
         <input type="file" id="libraryFileInput" accept="application/pdf,.pdf" multiple hidden />
       </div>
-      <p class="lib-drop-hint admin-only">PDF 여러 개를 한 번에 선택하거나, 화면에 끌어다 놓아도 돼요</p>
+      <label class="lib-dropbox admin-only" id="dropbox" for="libraryFileInput">
+        <span class="lib-dropbox-icon">📥</span>
+        <span class="lib-dropbox-text"><strong>콘티 PDF를 여기로 끌어다 놓으세요</strong>
+          <span class="lib-dropbox-sub">여러 개를 한꺼번에, 폴더째로 놓아도 돼요 · 눌러서 파일 고르기</span></span>
+      </label>
     </section>
 
     <!-- ===== 업로드 진행 상태 ===== -->
@@ -77,6 +81,7 @@
       <div>
         <p class="lib-upload-progress-title" id="uploadProgressTitle">콘티를 처리하는 중...</p>
         <p class="lib-upload-progress-sub">페이지마다 제목·키·코드를 읽고 곡 단위로 나누고 있어요. 스캔한 PDF는 페이지당 몇 초 걸려요.</p>
+        <ul class="lib-upload-list" id="uploadFileList"></ul>
       </div>
     </div>
 
@@ -171,7 +176,7 @@
     </div>
   </footer>
 
-  <script src="js/api.js?v=4"></script>
-  <script src="js/library.js?v=4"></script>
+  <script src="js/api.js?v=5"></script>
+  <script src="js/library.js?v=5"></script>
 </body>
 </html>

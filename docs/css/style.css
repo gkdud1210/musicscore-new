@@ -1251,6 +1251,27 @@ input[type="checkbox"] {
 @keyframes spin { to { transform: rotate(360deg); } }
 .lib-upload-progress-title { font-weight: 700; margin-bottom: 2px; }
 .lib-upload-progress-sub { font-size: 12px; color: var(--text-muted); }
+.lib-upload-progress > div:last-child { flex: 1; min-width: 0; }
+.lib-upload-list { list-style: none; margin: 10px 0 0; padding: 0; max-height: 220px; overflow-y: auto; font-size: 13px; }
+.lib-upload-list:empty { display: none; }
+.lib-upload-list li { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; border-top: 1px solid var(--border); }
+.lib-upload-list .up-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-upload-list .up-note { flex-shrink: 0; font-size: 12px; color: var(--text-muted); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-upload-list .up-work .up-name { font-weight: 700; }
+.lib-upload-list .up-fail .up-note { color: #ff6b6b; }
+
+/* 늘 보이는 업로드 상자 (끌어다 놓기 / 눌러서 선택) */
+.lib-dropbox {
+  display: flex; align-items: center; gap: 14px;
+  padding: 18px 22px; cursor: pointer;
+  border: 2px dashed var(--border); border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  transition: border-color .15s, background .15s;
+}
+.lib-dropbox:hover, .lib-dropbox.drag-over { border-color: var(--accent); background: rgba(124,107,255,0.08); }
+.lib-dropbox-icon { font-size: 28px; flex-shrink: 0; }
+.lib-dropbox-text { display: flex; flex-direction: column; gap: 3px; font-size: 15px; }
+.lib-dropbox-sub { font-size: 12px; color: var(--text-muted); }
 
 .lib-grid-section { display: flex; flex-direction: column; gap: 16px; }
 .lib-grid-header { display: flex; justify-content: flex-end; }
