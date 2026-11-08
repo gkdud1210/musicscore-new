@@ -21,6 +21,9 @@ const LibState = {
   setlist: loadSetlist(),
   modal: null,            // { type: 'song', groupKey } | { type: 'conti', id }
   modalDirty: false,
+  marks: {},              // 곡 묶음(groupKey) → ['⭐', '❤️', ...] (팀 공용 즐겨찾기 표시)
+  palette: [],
+  selectedMark: null,     // 즐겨찾기 필터
 };
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -118,11 +121,13 @@ async function refreshAll() {
   }
   LibState.facets = facets;
   LibState.contis = contis;
+  await loadMarks();
   document.getElementById('libraryOffline').classList.add('hidden');
   switchTab(LibState.tab);
   try {
     document.getElementById('songsTabCount').textContent = facets.total ? `(${facets.total})` : '';
     document.getElementById('contisTabCount').textContent = contis.length ? `(${contis.length})` : '';
+    renderMarkChips();
     renderKeyChips();
     renderChordChips();
     renderContis();
@@ -136,6 +141,7 @@ async function refreshAll() {
 /** 업로드 직후: 필터를 비워서 새 곡이 가려지지 않게 하고, 방금 올린 콘티를 바로 열어 보여준다. */
 function resetFilters() {
   LibState.q = '';
+  LibState.selectedMark = null;
   LibState.selectedKeys.clear();
   LibState.selectedChords.clear();
   const input = document.getElementById('librarySearch');
@@ -197,6 +203,70 @@ function initSearch() {
   });
 }
 
+/* ============================================================
+   즐겨찾기 표시 (색깔 별·하트·동그라미·네모) — 팀 전체 공용
+   ============================================================ */
+async function loadMarks() {
+  try {
+    const r = await apiJson('/api/marks');
+    LibState.marks = r.marks || {};
+    LibState.palette = r.palette || [];
+  } catch (e) {
+    console.warn('즐겨찾기 불러오기 실패:', e);
+  }
+}
+
+function marksOf(groupKey) {
+  return LibState.marks[groupKey] || [];
+}
+
+function renderMarkChips() {
+  const row = document.getElementById('markFilterRow');
+  const el = document.getElementById('markFilterChips');
+  if (!row || !el) return;
+  const counts = new Map();
+  Object.values(LibState.marks).forEach(ms => ms.forEach(m => counts.set(m, (counts.get(m) || 0) + 1)));
+  const used = LibState.palette.filter(m => counts.has(m));
+  if (!used.length) {
+    el.innerHTML = '<span class="lib-chord-empty">곡을 눌러 ⭐❤️🔵🟩 같은 표시를 붙이면 여기서 바로 모아볼 수 있어요</span>';
+    return;
+  }
+  el.innerHTML = `<button type="button" class="lib-chord-chip${LibState.selectedMark ? '' : ' active'}" data-action="mark-filter" data-mark="">전체</button>`
+    + used.map(m => `<button type="button" class="lib-chord-chip mark-chip${LibState.selectedMark === m ? ' active' : ''}"
+        data-action="mark-filter" data-mark="${escapeHtml(m)}">${m} <span class="lib-chip-count">${counts.get(m)}</span></button>`).join('');
+}
+
+function markPicker(groupKey) {
+  const mine = new Set(marksOf(groupKey));
+  return `<div class="mark-picker" role="group" aria-label="즐겨찾기 표시">
+    <span class="mark-picker-label">표시</span>
+    ${LibState.palette.map(m => `<button type="button" class="mark-btn${mine.has(m) ? ' on' : ''}"
+        data-action="toggle-song-mark" data-group="${escapeHtml(groupKey)}" data-mark="${escapeHtml(m)}"
+        aria-pressed="${mine.has(m)}">${m}</button>`).join('')}
+  </div>`;
+}
+
+async function toggleSongMark(groupKey, mark) {
+  const cur = marksOf(groupKey);
+  const next = cur.includes(mark) ? cur.filter(m => m !== mark) : [...cur, mark];
+  LibState.marks[groupKey] = next;           // 화면은 바로 바꾸고
+  if (!next.length) delete LibState.marks[groupKey];
+  rerenderMarks();
+  try {
+    await apiJson('/api/marks', jsonBody('POST', { group_key: groupKey, marks: next }));
+  } catch (e) {
+    showToast('표시 저장 실패: ' + e.message, 'error');
+    if (cur.length) LibState.marks[groupKey] = cur; else delete LibState.marks[groupKey];
+    rerenderMarks();
+  }
+}
+
+function rerenderMarks() {
+  renderMarkChips();
+  renderSongs();
+  if (LibState.modal?.type === 'song') renderSongModal();
+}
+
 function renderKeyChips() {
   const el = document.getElementById('keyFilterChips');
   const keys = [...LibState.facets.keys].sort((a, b) => keySortIndex(a.key) - keySortIndex(b.key));
@@ -227,20 +297,23 @@ function renderChordChips() {
 function renderSongs() {
   const grid = document.getElementById('songGrid');
   const empty = document.getElementById('songsEmpty');
-  const total = LibState.groups.reduce((n, g) => n + g.versions.length, 0);
+  const groups = LibState.selectedMark
+    ? LibState.groups.filter(g => marksOf(g.key).includes(LibState.selectedMark))
+    : LibState.groups;
+  const total = groups.reduce((n, g) => n + g.versions.length, 0);
   document.getElementById('songsCount').textContent =
-    LibState.groups.length ? `${LibState.groups.length}곡 (악보 ${total}장)` : '';
+    groups.length ? `${LibState.selectedMark ? LibState.selectedMark + ' ' : ''}${groups.length}곡 (악보 ${total}장)` : '';
 
-  if (!LibState.groups.length) {
+  if (!groups.length) {
     grid.innerHTML = '';
-    const filtered = LibState.q || LibState.selectedKeys.size || LibState.selectedChords.size;
+    const filtered = LibState.q || LibState.selectedKeys.size || LibState.selectedChords.size || LibState.selectedMark;
     document.getElementById('songsEmptyTitle').textContent = filtered ? '조건에 맞는 곡이 없어요' : '아직 업로드한 콘티가 없어요';
     document.getElementById('songsEmptySub').textContent = filtered ? '검색어나 키 필터를 바꿔보세요' : '위의 "콘티 PDF 업로드" 버튼으로 PDF를 올려보세요';
     empty.classList.remove('hidden');
     return;
   }
   empty.classList.add('hidden');
-  grid.innerHTML = LibState.groups.map(renderSongCard).join('');
+  grid.innerHTML = groups.map(renderSongCard).join('');
 }
 
 function inSetlist(songId) {
@@ -271,7 +344,7 @@ function renderSongCard(g) {
         ${pages > 1 ? `<span class="lib-card-pages">${pages}p</span>` : ''}
       </div>
       <div class="lib-card-body">
-        <p class="lib-card-title" data-action="open-song" data-group="${escapeHtml(g.key)}">${escapeHtml(s.title)}</p>
+        <p class="lib-card-title" data-action="open-song" data-group="${escapeHtml(g.key)}">${marksOf(g.key).length ? `<span class="card-marks">${marksOf(g.key).join('')}</span> ` : ''}${escapeHtml(s.title)}</p>
         <p class="song-meta">${meta}</p>
         ${otherKeys}
       </div>
@@ -321,6 +394,7 @@ function renderSongModal() {
   document.getElementById('libModalBody').innerHTML = `
     <h2 class="lib-modal-title">${escapeHtml(versions[0].title)}</h2>
     <p class="lib-modal-sub">${contiCount > 1 ? `${contiCount}개 콘티에서 사용했어요` : '1개 콘티에서 사용했어요'}</p>
+    ${markPicker(m.groupKey)}
     ${renderSongContis(versions)}
     <h3 class="song-section-title">🎼 악보 <span>${versions.length}</span></h3>
     ${versions.map(renderSongVersion).join('')}`;
@@ -519,6 +593,7 @@ function renderContiModal(conti, songs) {
       <input type="date" name="conti_date" class="lib-edit-title-input" value="${escapeHtml(conti.conti_date || '')}" />
       <button type="submit" class="btn-primary btn-compact">저장</button>
     </form>
+    <div class="now-row"><button type="button" class="btn-now" data-live="send-conti">📡 NOW · 지금 이 콘티 띄우기</button></div>
     <p class="lib-modal-sub">
       자동으로 나눈 곡이 틀렸다면 여기서 고쳐주세요. 표지·순서지 페이지는 "곡에서 빼기"를 누르면 검색에 안 나와요.
       <button class="btn-link" data-action="reprocess" data-id="${conti.id}">처음부터 다시 분석</button>
@@ -591,6 +666,7 @@ function renderContiModalReadOnly(conti, songs) {
   document.getElementById('libModalBody').innerHTML = `
     <h2 class="lib-modal-title">${escapeHtml(conti.title)}</h2>
     <p class="lib-modal-sub">${conti.conti_date ? `📅 ${escapeHtml(conti.conti_date)} · ` : ''}${songs.length}곡</p>
+    <div class="now-row"><button type="button" class="btn-now" data-live="send-conti">📡 NOW · 지금 이 콘티 띄우기</button></div>
     ${songs.map((s, i) => `
       <div class="conti-song">
         <div class="conti-song-head">
@@ -656,6 +732,13 @@ function initDelegatedActions() {
         break;
       case 'toggle-set': e.preventDefault(); toggleSetlist(id); break;
       case 'key-all': LibState.selectedKeys.clear(); renderKeyChips(); fetchSongs(); break;
+      case 'mark-filter':
+        LibState.selectedMark = el.dataset.mark && LibState.selectedMark !== el.dataset.mark ? el.dataset.mark : null;
+        if (LibState.tab !== 'songs') switchTab('songs');
+        renderMarkChips();
+        renderSongs();
+        break;
+      case 'toggle-song-mark': toggleSongMark(el.dataset.group, el.dataset.mark); break;
       case 'toggle-key': toggleIn(LibState.selectedKeys, el.dataset.key); renderKeyChips(); fetchSongs(); break;
       case 'toggle-chord': toggleIn(LibState.selectedChords, el.dataset.chord); renderChordChips(); fetchSongs(); break;
       case 'edit-song': document.getElementById(`songEdit-${id}`)?.classList.toggle('hidden'); break;

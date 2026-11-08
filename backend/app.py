@@ -73,6 +73,12 @@ from library import router as library_router
 
 init_db()
 app.include_router(library_router, prefix="/api")
+
+# ── 즐겨찾기 표시 / 라이브 모드(NOW) ─────────────────────────
+from extras import init_extras_db, router as extras_router
+
+init_extras_db()
+app.include_router(extras_router, prefix="/api")
 logger.info("✅ 악보 라이브러리 API 등록 (/api/scores)")
 
 # ── Anthropic Claude 임포트 (설치된 경우) ─────────────────────

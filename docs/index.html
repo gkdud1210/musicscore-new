@@ -93,6 +93,10 @@
 
     <!-- ===== 곡 찾기 ===== -->
     <section class="lib-grid-section" id="songsPanel">
+      <div class="lib-filter-row" id="markFilterRow">
+        <span class="lib-chord-filter-label">즐겨찾기</span>
+        <div class="lib-chord-chips" id="markFilterChips"></div>
+      </div>
       <div class="lib-filter-row">
         <span class="lib-chord-filter-label">키</span>
         <div class="lib-chord-chips" id="keyFilterChips"></div>
@@ -148,6 +152,7 @@
         <label class="setlist-check"><input type="checkbox" id="setlistAnnot" checked /> 필기 포함</label>
         <div class="setlist-export-actions">
           <button class="btn-sm" onclick="clearSetlist()">비우기</button>
+          <button class="btn-now btn-compact" data-live="send-setlist" title="담은 순서대로 접속한 사람들에게 띄워요">📡 NOW</button>
           <button class="btn-primary" id="setlistExportBtn" onclick="exportSetlist()">⬇️ PDF 내보내기</button>
         </div>
       </div>
@@ -178,5 +183,6 @@
 
   <script src="js/api.js?v=6"></script>
   <script src="js/library.js?v=6"></script>
+  <script src="js/live.js?v=6"></script>
 </body>
 </html>

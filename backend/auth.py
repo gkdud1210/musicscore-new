@@ -43,6 +43,8 @@ MEMBER_WRITE_PATTERNS = [
     re.compile(r"^/api/setlist/export$"),
     re.compile(r"^/api/scores/\d+/annotations/\d+$"),
     re.compile(r"^/api/scores/\d+/analyze-page/\d+$"),
+    re.compile(r"^/api/marks$"),   # 즐겨찾기 표시는 팀원도
+    re.compile(r"^/api/live$"),    # 라이브(NOW) 보내기/끝내기도 팀원도
     re.compile(r"^/(analyze|transpose|omr-analyze)$"),
 ]
 
