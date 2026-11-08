@@ -52,9 +52,29 @@ function gemini_post(array $body, string $model, int $timeout = 70): array
     $raw = curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err = curl_error($ch);
-    curl_close($ch);
-    if ($raw === false) return [0, "연결 실패: $err"];
+        if ($raw === false) return [0, "연결 실패: $err"];
     return [$code, (string)$raw];
+}
+
+/** 429 답에 적힌 "몇 초 뒤에 다시" (없으면 0) */
+function gemini_retry_seconds(string $raw): int
+{
+    $d = json_decode($raw, true);
+    foreach ($d['error']['details'] ?? [] as $x) {
+        if (!empty($x['retryDelay']) && preg_match('/^(\d+(?:\.\d+)?)s$/', (string)$x['retryDelay'], $m)) return (int)ceil((float)$m[1]);
+    }
+    return 0;
+}
+
+function gemini_quota_file(string $model): string { return DATA_DIR . '/.gemini_quota_' . preg_replace('/[^a-z0-9.-]/i', '_', $model); }
+function gemini_quota_blocked(string $model): bool
+{
+    $f = gemini_quota_file($model);
+    return is_file($f) && (int)file_get_contents($f) > time();
+}
+function gemini_quota_block(string $model, int $seconds): void
+{
+    @file_put_contents(gemini_quota_file($model), (string)(time() + min($seconds, 86400)));
 }
 
 /** JPEG 파일 하나 → 페이지 분석 결과 (맥 버전 analyze_page 와 같은 모양) */
@@ -72,22 +92,34 @@ function gemini_read_page(string $jpegPath, int $pageNumber, int $pageCount): ar
         ]]],
         'generationConfig' => $gen,
     ];
-    // 기본 모델이 바쁘면(한도·서버 오류·응답 없음) 가벼운 모델로 한 번 더 (2026-11-08: Flash 가 한동안 429/무응답)
-    $primary = trim((string)cfg('gemini_model')) ?: 'gemini-flash-latest';
-    $fallback = trim((string)cfg('gemini_fallback_model')) ?: 'gemini-flash-lite-latest';
-    $models = $fallback !== $primary ? [$primary, $fallback] : [$primary];
-    foreach ($models as $mi => $model) {
+    // 빠른 모델(Flash-Lite, 한 쪽 3~5초)을 먼저, 안 되면 Flash 로. config 의 gemini_prefer = 'quality' 면 Flash 먼저.
+    // (2026-11-09 무료 사용량: Flash 는 하루 20번뿐 → 다 쓰면 매 쪽 거절당하며 느려졌다)
+    $quality = trim((string)cfg('gemini_model')) ?: 'gemini-flash-latest';
+    $fast = trim((string)cfg('gemini_fallback_model')) ?: 'gemini-flash-lite-latest';
+    $models = cfg('gemini_prefer') === 'quality' ? [$quality, $fast] : [$fast, $quality];
+    $models = array_values(array_unique($models));
+    // 하루 한도를 다 쓴 모델은 풀릴 때까지 건너뛴다 (매번 물어보고 거절당하는 시간 아끼기)
+    $usable = array_values(array_filter($models, fn($m) => !gemini_quota_blocked($m)));
+    if (!$usable) $usable = [end($models)];
+    $retryAfter = 0;
+    foreach ($usable as $model) {
         $b = $body;
-        if ($mi > 0) unset($b['generationConfig']['thinkingConfig']);
-        [$code, $raw] = gemini_post($b, $model, $mi === 0 ? 60 : 70);
+        if ($model !== $quality) unset($b['generationConfig']['thinkingConfig']);   // 빠른 모델은 생각 단계 없이
+        [$code, $raw] = gemini_post($b, $model, 60);
         if ($code === 400 && isset($b['generationConfig']['thinkingConfig']) && stripos($raw, 'thinking') !== false) {
             // 이 모델은 생각 수준 설정을 모름 → 기억해 두고 빼고 다시
             @file_put_contents($flag, date('c'));
             unset($b['generationConfig']['thinkingConfig']);
             [$code, $raw] = gemini_post($b, $model);
         }
+        if ($code === 429) {
+            $wait = gemini_retry_seconds($raw);
+            if ($wait > 300) gemini_quota_block($model, $wait);   // 하루 한도 → 풀릴 때까지 이 모델은 건너뜀
+            else $retryAfter = max($retryAfter, $wait);
+        }
         if ($code === 200 || !($code === 0 || $code === 429 || $code >= 500)) break;
     }
+    if ($code === 429 && $retryAfter > 0 && !headers_sent()) header('Retry-After: ' . min(60, max(3, $retryAfter)));
     if ($code !== 200) {
         $detail = mb_substr($raw, 0, 300);
         if ($code === 401 || $code === 403 || ($code === 400 && str_contains($detail, 'API key'))) {

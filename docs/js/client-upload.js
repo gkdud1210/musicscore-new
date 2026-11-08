@@ -75,7 +75,9 @@ async function postWithRetry(path, options, label) {
     const err = await res.json().catch(() => ({}));
     const retry = res.status === 429 || res.status >= 500;
     if (!retry || attempt >= waits.length) throw new Error(err.detail || `${label}: HTTP ${res.status}`);
-    await sleep(waits[attempt] * 1000);
+    // 제미나이가 "몇 초 뒤에"를 알려주면 그만큼만 기다린다
+    const hint = Number(res.headers.get('Retry-After')) || 0;
+    await sleep((hint ? Math.min(60, Math.max(3, hint)) : waits[attempt]) * 1000);
   }
 }
 
