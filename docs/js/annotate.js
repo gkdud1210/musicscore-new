@@ -186,7 +186,7 @@ function redrawCanvas() {
 }
 
 function drawStroke(ctx, canvas, stroke) {
-  if (stroke.points.length < 2) return;
+  if (!Array.isArray(stroke?.points) || stroke.points.length < 2) return;
   ctx.save();
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';

@@ -2244,3 +2244,51 @@ form.dirty .lib-edit-title-input { border-color: #f59e0b; background: rgba(245,1
   .conti-songs-wrap.view-cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .conti-songs-wrap.view-one .song-pages.small { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ============================================================
+   밝은 화면 (하얀 테마) — html[data-theme="light"]
+   라이브 악보 화면은 무대용이라 어두운 그대로 둔다
+   ============================================================ */
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg-primary:    #f4f5f9;
+  --bg-secondary:  #ffffff;
+  --bg-card:       #eef0f5;
+  --bg-card-hover: #e4e6ee;
+  --border:        #d9dbe5;
+  --border-light:  #b9bccb;
+  --accent:        #6a58f5;
+  --accent-light:  #4f3ee0;
+  --accent-dim:    rgba(106, 88, 245, 0.10);
+  --accent-glow:   rgba(106, 88, 245, 0.25);
+  --green:         #15964a;
+  --green-dim:     rgba(21, 150, 74, 0.12);
+  --text-primary:  #17171f;
+  --text-secondary:#4b4d60;
+  --text-muted:    #7b7e92;
+  --shadow-card:   0 4px 18px rgba(30, 30, 60, 0.10);
+  --shadow-glow:   0 0 30px rgba(106, 88, 245, 0.12);
+}
+html[data-theme="light"] .bg-particles { display: none; }
+html[data-theme="light"] .header { background: rgba(255, 255, 255, 0.88); }
+html[data-theme="light"] .btn-sm {
+  background: #fff; color: var(--text-primary); border-color: var(--border-light);
+}
+html[data-theme="light"] .btn-sm:hover { background: var(--bg-card-hover); }
+html[data-theme="light"] .btn-sm.danger { color: #c62828; }
+html[data-theme="light"] .lib-modal,
+html[data-theme="light"] .worship-modal { background: rgba(40, 42, 60, 0.45); }
+html[data-theme="light"] .viewer-canvas-scroll { background: #dfe1e8; }
+html[data-theme="light"] .omr-image-wrap { background: #f0f1f4; }
+html[data-theme="light"] .lib-card-thumb, html[data-theme="light"] .conti-thumb,
+html[data-theme="light"] .song-page { box-shadow: 0 0 0 1px var(--border); }
+html[data-theme="light"] .song-cats-sep { background: var(--border); }
+html[data-theme="light"] .tempo-picker .tempo-btn { border-color: var(--border-light); }
+html[data-theme="light"] .dup-sheets { border-color: var(--border-light); }
+html[data-theme="light"] .error-hint, html[data-theme="light"] .lib-upload-list .up-fail .up-note { color: #c62828; }
+html[data-theme="light"] .pending-badge.dup { color: #15803d; }
+html[data-theme="light"] .ws-state { color: #b26a00; }
+html[data-theme="light"] .ws-state.ok { color: #15803d; }
+html[data-theme="light"] .lib-card-pages { background: rgba(20, 20, 30, 0.7); }
+
+.theme-toggle-btn { font-size: 15px; line-height: 1; padding: 6px 9px; }

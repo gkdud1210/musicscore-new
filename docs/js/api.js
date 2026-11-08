@@ -398,6 +398,27 @@ function initVisitorBadge() {
   setInterval(() => { if (document.visibilityState === 'visible') load(); }, 60000);
 }
 
+/* ── 밝은 화면 / 어두운 화면 (기기마다 기억) ── */
+function currentTheme() { return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'; }
+function setTheme(theme) {
+  if (theme === 'light') document.documentElement.dataset.theme = 'light';
+  else delete document.documentElement.dataset.theme;
+  try { localStorage.setItem('jandi.theme', theme); } catch { /* 저장 불가 */ }
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', theme === 'light' ? '#ffffff' : '#0a0a0f');
+  document.querySelectorAll('.theme-toggle-btn').forEach(paintThemeBtn);
+}
+function paintThemeBtn(btn) {
+  const light = currentTheme() === 'light';
+  btn.textContent = light ? '🌙' : '☀️';
+  btn.title = light ? '어두운 화면으로' : '밝은 화면으로';
+  btn.setAttribute('aria-label', btn.title);
+}
+function initThemeToggle(btn) {
+  if (!btn) return;
+  paintThemeBtn(btn);
+  btn.addEventListener('click', () => setTheme(currentTheme() === 'light' ? 'dark' : 'light'));
+}
+
 function renderHeaderAccount() {
   const header = document.querySelector('.header-inner');
   if (!header || document.getElementById('headerAccount')) return;
@@ -412,8 +433,10 @@ function renderHeaderAccount() {
     if (AuthState.role === 'admin' && AuthState.hasAdmin) html += `<span class="header-account-role">관리자</span>`;
     html += `<button type="button" class="header-account-btn" id="logoutBtn">로그아웃</button>`;
   }
+  html += `<button type="button" class="header-account-btn theme-toggle-btn" id="themeToggleBtn"></button>`;
   box.innerHTML = html;
   header.appendChild(box);
+  initThemeToggle(document.getElementById('themeToggleBtn'));
   document.getElementById('logoutBtn')?.addEventListener('click', async () => {
     await fetch(`${API_BASE}/api/logout`, { method: 'POST' });
     location.href = 'login.html';

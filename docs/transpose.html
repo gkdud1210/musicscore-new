@@ -7,6 +7,7 @@
   <!-- PWA (홈 화면에 추가) -->
   <link rel="manifest" href="manifest.webmanifest" />
   <meta name="theme-color" content="#0a0a0f" />
+  <script>try{if(localStorage.getItem('jandi.theme')==='light'){document.documentElement.dataset.theme='light';document.querySelector('meta[name=theme-color]')?.setAttribute('content','#ffffff')}}catch(e){}</script>
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black" />
@@ -19,7 +20,7 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="css/style.css?v=9" />
+  <link rel="stylesheet" href="css/style.css?v=19" />
   <!-- VexFlow for sheet music rendering -->
   <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.2/build/cjs/vexflow.js"></script>
 </head>
@@ -591,7 +592,7 @@
   </footer>
 
   <script src="js/vexflow-handler.js"></script>
-  <script src="js/api.js?v=4"></script>
+  <script src="js/api.js?v=14"></script>
   <script src="js/main.js?v=9"></script>
 </body>
 </html>
