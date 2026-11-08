@@ -725,19 +725,26 @@ async function loadRecipients() {
     // 나는 빼고 (관리자·팀원 공용은 같은 코드를 쓰는 다른 사람이 있으니 그대로)
     LiveState.recipients = r.recipients.filter(x => x.key !== r.me || x.key === 'admin' || x.key === 'team');
   } catch { LiveState.recipients = []; }
-  LiveState.msgTo = new Set(LiveState.recipients.map(x => x.key));
+  LiveState.msgTo = defaultRecipients();
 }
+/** 기본 받는 사람: "메세지 기본 제외"로 정한 사람(예: 목사님)은 빼고 */
+const defaultRecipients = () => new Set((LiveState.recipients || []).filter(x => x.default !== false).map(x => x.key));
 
 function recipientChips() {
   const list = LiveState.recipients || [];
   if (!list.length) return '';
   const to = LiveState.msgTo;
   const all = to.size === list.length;
+  const def = defaultRecipients();
+  const isDefault = !all && def.size === to.size && [...def].every(k => to.has(k));
+  const left = list.filter(x => !to.has(x.key)).map(x => x.name);
   return `<span class="live-to-label">받는 사람</span>
     <button type="button" class="live-to-chip all${all ? ' on' : ''}" data-live="to-all">${all ? '✓ ' : ''}전체</button>
     ${list.map(x => `<button type="button" class="live-to-chip${to.has(x.key) ? ' on' : ''}" data-live="to-toggle" data-key="${escapeHtml(x.key)}"
       aria-pressed="${to.has(x.key)}">${to.has(x.key) ? '✓ ' : ''}${escapeHtml(x.name)}</button>`).join('')}
-    <span class="live-to-sum">${all ? '모두에게 보여요' : to.size ? `${to.size}명에게만 보여요` : '받는 사람을 골라주세요'}</span>`;
+    <span class="live-to-sum">${all ? '모두에게 보여요' : !to.size ? '받는 사람을 골라주세요'
+      : left.length <= 2 ? `${escapeHtml(left.join(', '))} 빼고 보여요${isDefault ? ' (기본)' : ''}` : `${to.size}명에게만 보여요`}</span>
+    ${!isDefault && def.size !== list.length ? '<button type="button" class="live-to-reset" data-live="to-default">↺ 기본으로</button>' : ''}`;
 }
 
 function toggleRecipient(key, all = false) {
@@ -809,6 +816,7 @@ document.addEventListener('click', e => {
     case 'send-msg': sendLiveMessage(el.dataset.text); break;
     case 'add-word': addMsgWord(el.dataset.text); break;
     case 'to-all': toggleRecipient(null, true); break;
+    case 'to-default': LiveState.msgTo = defaultRecipients(); document.getElementById('liveTo').innerHTML = recipientChips(); break;
     case 'to-toggle': toggleRecipient(el.dataset.key); break;
     case 'word-back': removeMsgWord(); break;
     case 'quick-edit': openLiveMsgPanel(true); break;

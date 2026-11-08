@@ -446,6 +446,8 @@ async function openPeopleEditor() {
   const row = p => `<div class="people-row" data-id="${escapeHtml(p.id || '')}">
       <input type="text" class="lib-edit-title-input people-name" maxlength="20" placeholder="이름 (예: 베이스 하늘)" value="${escapeHtml(p.name || '')}" />
       <input type="text" class="lib-edit-title-input people-code" maxlength="30" inputmode="numeric" placeholder="입장코드" value="${escapeHtml(p.code || '')}" />
+      <label class="people-mute" title="라이브 메세지 받는 사람에서 처음부터 빠져 있어요 (보낼 때 눌러서 넣을 수 있어요)">
+        <input type="checkbox" class="people-mute-cb"${p.mute ? ' checked' : ''} /> 메세지 기본 제외</label>
       <button type="button" class="btn-sm" data-people="del" aria-label="빼기">✕</button>
     </div>`;
   wrap.innerHTML = `<div class="people-box" role="dialog" aria-modal="true" aria-label="사람별 입장코드">
@@ -475,6 +477,7 @@ async function openPeopleEditor() {
     if (act === 'save') {
       const list = [...wrap.querySelectorAll('.people-row')].map(r => ({
         id: r.dataset.id, name: r.querySelector('.people-name').value, code: r.querySelector('.people-code').value,
+        mute: r.querySelector('.people-mute-cb').checked,
       }));
       try {
         await peopleApi('PUT', { people: list, team_code: document.getElementById('peopleTeamCode').value });

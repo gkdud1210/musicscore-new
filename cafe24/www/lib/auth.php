@@ -186,7 +186,7 @@ function sender_name(): string
 // ── 입장코드 관리 (관리자) ──
 function api_get_people(): array
 {
-    return ['people' => array_map(fn($p) => ['id' => $p['id'], 'name' => $p['name'], 'code' => $p['code']], people_list()),
+    return ['people' => array_map(fn($p) => ['id' => $p['id'], 'name' => $p['name'], 'code' => $p['code'], 'mute' => !empty($p['mute'])], people_list()),
             'team_code' => team_code()];
 }
 
@@ -211,7 +211,7 @@ function api_put_people(): array
         }
         $codes[$code] = true;
         $id = preg_match('/^[a-f0-9]{8}$/', (string)($p['id'] ?? '')) ? $p['id'] : bin2hex(random_bytes(4));
-        $out[] = ['id' => $id, 'name' => $name, 'code' => $code];
+        $out[] = ['id' => $id, 'name' => $name, 'code' => $code, 'mute' => !empty($p['mute'])];
         if (count($out) >= 50) break;
     }
     state_set('people', json_encode($out, JSON_UNESCAPED_UNICODE));
@@ -231,8 +231,8 @@ function recipient_key(): string
 function api_live_recipients(): array
 {
     if (!can_message()) throw new ApiError(403, '메세지를 보낼 수 없어요');
-    $list = [['key' => 'admin', 'name' => '관리자']];
-    foreach (people_list() as $p) $list[] = ['key' => $p['id'], 'name' => $p['name']];
-    if (team_code() !== '') $list[] = ['key' => 'team', 'name' => '팀원(공용 코드)'];
+    $list = [['key' => 'admin', 'name' => '관리자', 'default' => true]];
+    foreach (people_list() as $p) $list[] = ['key' => $p['id'], 'name' => $p['name'], 'default' => empty($p['mute'])];
+    if (team_code() !== '') $list[] = ['key' => 'team', 'name' => '팀원(공용 코드)', 'default' => true];
     return ['recipients' => $list, 'me' => recipient_key()];
 }

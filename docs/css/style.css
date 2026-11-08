@@ -2421,3 +2421,7 @@ html[data-theme="light"] .live-to-sum { color: #555; }
 @media (max-width: 640px) {
   .nav-link.active { display: none; }   /* 지금 있는 페이지 링크는 휴대폰에선 빼서 이름·로그아웃 자리 확보 */
 }
+.people-mute { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); white-space: nowrap; cursor: pointer; }
+.live-to-reset { background: none; border: 0; color: #93c5fd; font-size: 12px; cursor: pointer; text-decoration: underline; padding: 2px 4px; }
+html[data-theme="light"] .live-to-reset { color: #1d4ed8; }
+@media (max-width: 640px) { .people-row { flex-wrap: wrap; } .people-row .people-name { flex: 1 1 100%; } }
