@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  찬양악보 라이브러리 — 서버 첫 설치 스크립트 (Ubuntu 22.04/24.04)
+#  J&I worship — 서버 첫 설치 스크립트 (Ubuntu 22.04/24.04)
 #  서버에서 한 번만 실행:  sudo bash setup-server.sh jandiworship.cloud
 #
 #  하는 일:
@@ -76,7 +76,7 @@ chmod 640 $APP_DIR/backend/.env
 echo "▶ 5/6 서비스 등록"
 cat > /etc/systemd/system/chanyang.service <<EOF
 [Unit]
-Description=찬양악보 라이브러리
+Description=J&I worship
 After=network.target
 
 [Service]

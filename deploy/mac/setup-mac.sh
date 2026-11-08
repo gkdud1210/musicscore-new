@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-#  이 맥북을 찬양악보 라이브러리 서버로 만들기 (Cloudflare 터널, 무료)
+#  이 맥북을 J&I worship 서버로 만들기 (Cloudflare 터널, 무료)
 #    bash deploy/mac/setup-mac.sh
 #
 #  하는 일:
