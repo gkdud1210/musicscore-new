@@ -224,6 +224,28 @@ function groupSongs(songs) {
 /* ============================================================
    탭 / 검색 / 필터
    ============================================================ */
+/* 보기 방식 (곡: 큰 그림/작은 그림/제목만 · 콘티: 그림+곡/바둑판/제목만) — 이 기기에 기억 */
+const LIB_VIEWS = { songs: ['big', 'small', 'list'], contis: ['rows', 'tiles', 'list'] };
+const LIB_VIEW_TARGET = { songs: 'songGrid', contis: 'contiList' };
+function getLibView(kind) {
+  let v = null;
+  try { v = localStorage.getItem('jandi.view.' + kind); } catch { /* 저장 불가 */ }
+  return LIB_VIEWS[kind].includes(v) ? v : LIB_VIEWS[kind][0];
+}
+function setLibView(kind, view, save = true) {
+  if (!LIB_VIEWS[kind].includes(view)) return;
+  if (save) { try { localStorage.setItem('jandi.view.' + kind, view); } catch { /* 저장 불가 */ } }
+  const el = document.getElementById(LIB_VIEW_TARGET[kind]);
+  if (el) LIB_VIEWS[kind].forEach(v => el.classList.toggle('view-' + v, v === view));
+  document.querySelectorAll(`.lib-view-toggle[data-kind="${kind}"] button`).forEach(b => {
+    const on = b.dataset.view === view;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on);
+  });
+}
+function applyLibViews() { Object.keys(LIB_VIEWS).forEach(k => setLibView(k, getLibView(k), false)); }
+document.addEventListener('DOMContentLoaded', applyLibViews);
+
 function switchTab(tab) {
   LibState.tab = tab;
   document.querySelectorAll('.lib-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -447,7 +469,7 @@ function renderSongCard(g) {
         ${pages > 1 ? `<span class="lib-card-pages">${pages}p</span>` : ''}
       </div>
       <div class="lib-card-body">
-        <p class="lib-card-title" data-action="open-song" data-group="${escapeHtml(g.key)}">${marksOf(g.key).length ? `<span class="card-marks">${marksOf(g.key).join('')}</span> ` : ''}${escapeHtml(s.title)}</p>
+        <p class="lib-card-title" data-action="open-song" data-group="${escapeHtml(g.key)}">${s.key ? `<span class="song-key-inline">${escapeHtml(s.key)}</span>` : ''}${marksOf(g.key).length ? `<span class="card-marks">${marksOf(g.key).join('')}</span> ` : ''}${escapeHtml(s.title)}</p>
         <p class="song-meta">${meta}</p>
         ${groupTags(g)}
         ${otherKeys}

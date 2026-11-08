@@ -19,7 +19,7 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="css/style.css?v=16" />
+  <link rel="stylesheet" href="css/style.css?v=17" />
 </head>
 <body>
   <div class="bg-particles" id="bgParticles"></div>
@@ -114,6 +114,11 @@
 
       <div class="lib-grid-header">
         <span id="songsCount" class="lib-grid-count">—</span>
+        <div class="lib-view-toggle" role="group" aria-label="보기 방식" data-kind="songs">
+          <button type="button" data-view="big" onclick="setLibView('songs','big')" title="큰 그림">🖼 큰 그림</button>
+          <button type="button" data-view="small" onclick="setLibView('songs','small')" title="작은 그림">▦ 작은 그림</button>
+          <button type="button" data-view="list" onclick="setLibView('songs','list')" title="그림 없이 제목만">☰ 제목만</button>
+        </div>
       </div>
       <div id="dupSheetBanner"></div>
       <div class="lib-grid lib-song-grid" id="songGrid"></div>
@@ -134,7 +139,14 @@
         <span class="lib-chord-filter-label">즐겨찾기</span>
         <div class="lib-chord-chips" id="contiMarkChips"></div>
       </div>
-      <div class="lib-grid-header"><span id="contisCount" class="lib-grid-count"></span></div>
+      <div class="lib-grid-header">
+        <span id="contisCount" class="lib-grid-count"></span>
+        <div class="lib-view-toggle" role="group" aria-label="보기 방식" data-kind="contis">
+          <button type="button" data-view="rows" onclick="setLibView('contis','rows')" title="그림 + 곡 목록">🖼 그림+곡</button>
+          <button type="button" data-view="tiles" onclick="setLibView('contis','tiles')" title="그림만 크게 바둑판">▦ 바둑판</button>
+          <button type="button" data-view="list" onclick="setLibView('contis','list')" title="그림 없이 제목만">☰ 제목만</button>
+        </div>
+      </div>
       <div class="lib-conti-list" id="contiList"></div>
       <div class="lib-empty hidden" id="contisEmpty">
         <span class="lib-empty-icon">📁</span>
@@ -200,7 +212,7 @@
 
   <script src="js/api.js?v=13"></script>
   <script src="js/client-upload.js?v=5"></script>
-  <script src="js/library.js?v=14"></script>
+  <script src="js/library.js?v=15"></script>
   <script src="js/live.js?v=11"></script>
   <script src="js/worship.js?v=3"></script>
 </body>
