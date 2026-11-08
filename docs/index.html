@@ -19,7 +19,7 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="css/style.css?v=10" />
+  <link rel="stylesheet" href="css/style.css?v=11" />
 </head>
 <body>
   <div class="bg-particles" id="bgParticles"></div>
@@ -48,7 +48,7 @@
     <section class="lib-hero">
       <h1 class="lib-hero-title">J&amp;I worship</h1>
       <p class="lib-hero-sub">
-        콘티 PDF를 올리면 곡마다 나눠서 제목·키·가사를 자동으로 인식해요.
+        콘티 PDF나 악보 사진을 올리면 곡마다 나눠서 제목·키·가사를 자동으로 인식해요.
         곡을 골라 담고 새 콘티 PDF로 내보내세요.
       </p>
 
@@ -66,14 +66,14 @@
         <button class="btn-now ws-open-btn" type="button" data-ws="open" title="날짜별로 콘티를 셋팅하고 라이브로 보기">🎤 예배 라이브</button>
         <button class="btn-primary admin-only" id="uploadTriggerBtn" onclick="document.getElementById('libraryFileInput').click()">
           <span class="btn-icon">＋</span>
-          콘티 PDF 업로드
+          PDF·사진 업로드
         </button>
-        <input type="file" id="libraryFileInput" accept="application/pdf,.pdf" multiple hidden />
+        <input type="file" id="libraryFileInput" accept="application/pdf,.pdf,image/*,.heic,.heif" multiple hidden />
       </div>
       <label class="lib-dropbox admin-only" id="dropbox" for="libraryFileInput">
         <span class="lib-dropbox-icon">📥</span>
-        <span class="lib-dropbox-text"><strong>콘티 PDF를 여기로 끌어다 놓으세요</strong>
-          <span class="lib-dropbox-sub">여러 개를 한꺼번에, 폴더째로 놓아도 돼요 · 눌러서 파일 고르기</span></span>
+        <span class="lib-dropbox-text"><strong>콘티 PDF나 악보 사진을 여기로 끌어다 놓으세요</strong>
+          <span class="lib-dropbox-sub">PDF는 여러 개·폴더째로 · 사진은 한 번에 고른 것끼리 콘티 하나 · 눌러서 고르기</span></span>
       </label>
     </section>
 
@@ -120,7 +120,7 @@
       <div class="lib-empty hidden" id="songsEmpty">
         <span class="lib-empty-icon">🎼</span>
         <p class="lib-empty-title" id="songsEmptyTitle">아직 업로드한 콘티가 없어요</p>
-        <p class="lib-empty-sub" id="songsEmptySub">위의 "콘티 PDF 업로드" 버튼으로 PDF를 올려보세요</p>
+        <p class="lib-empty-sub" id="songsEmptySub">위의 "PDF·사진 업로드" 버튼으로 올려보세요</p>
       </div>
     </section>
 
@@ -197,9 +197,9 @@
     </div>
   </footer>
 
-  <script src="js/api.js?v=9"></script>
-  <script src="js/client-upload.js?v=3"></script>
-  <script src="js/library.js?v=12"></script>
+  <script src="js/api.js?v=10"></script>
+  <script src="js/client-upload.js?v=4"></script>
+  <script src="js/library.js?v=13"></script>
   <script src="js/live.js?v=9"></script>
   <script src="js/worship.js?v=2"></script>
 </body>

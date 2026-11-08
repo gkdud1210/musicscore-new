@@ -14,6 +14,7 @@ require __DIR__ . '/lib/dedupe.php';
 require __DIR__ . '/lib/pdf.php';
 require __DIR__ . '/lib/library.php';
 require __DIR__ . '/lib/admin.php';
+require __DIR__ . '/lib/visits.php';
 
 // [메서드, 주소 패턴, 함수, 누구(public | member | member_ok | admin)]
 // member = 팀원도 볼 수 있는 읽기, member_ok = 팀원도 할 수 있는 쓰기, admin = 관리자만
@@ -65,6 +66,9 @@ $ROUTES = [
     ['GET', '#^/services/(\d{4}-\d{2}-\d{2})$#', 'api_get_service', 'member'],
     ['PUT', '#^/services/(\d{4}-\d{2}-\d{2})$#', 'api_put_service', 'admin'],
     ['DELETE', '#^/services/(\d{4}-\d{2}-\d{2})$#', 'api_delete_service', 'admin'],
+
+    ['POST', '#^/ping$#', 'api_ping', 'member_ok'],
+    ['GET', '#^/visitors$#', 'api_visitors', 'admin'],
 
     ['POST', '#^/admin/import$#', 'api_admin_import', 'admin'],
     ['POST', '#^/admin/rehash$#', 'api_admin_rehash', 'admin'],

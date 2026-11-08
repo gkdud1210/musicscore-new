@@ -2032,3 +2032,22 @@ form.dirty .lib-edit-title-input { border-color: #f59e0b; background: rgba(245,1
   .ws-set-tools { width: 100%; justify-content: flex-end; }
   .ws-actions > * { flex: 1; }
 }
+
+/* 접속자 수 (관리자) */
+.visitor-panel {
+  position: fixed; z-index: 400; width: 280px; max-width: calc(100vw - 16px);
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px); padding: 14px 16px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+}
+.visitor-panel.hidden { display: none; }
+.visitor-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.visitor-panel-head b { font-size: 18px; }
+.visitor-panel-head span { font-size: 12px; color: var(--text-muted); }
+.visitor-panel-today { font-size: 13px; color: var(--text-secondary); margin: 6px 0 12px; }
+.visitor-days { display: flex; gap: 6px; align-items: flex-end; height: 96px; }
+.visitor-day { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 3px; }
+.visitor-bar { width: 100%; min-height: 2px; background: var(--amber); border-radius: 3px 3px 0 0; opacity: 0.8; }
+.visitor-day b { font-size: 11px; }
+.visitor-day small { font-size: 9px; color: var(--text-muted); white-space: nowrap; }
+.visitor-note { font-size: 11px; color: var(--text-muted); margin-top: 10px; line-height: 1.5; }

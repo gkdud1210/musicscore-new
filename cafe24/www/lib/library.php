@@ -223,7 +223,7 @@ function api_create_score(): array
         $ex = q_one('SELECT * FROM scores WHERE file_hash = ?', [$hash]);
         if ($ex) return ['duplicate' => true] + score_summary($ex);
     }
-    $stem = preg_replace('/\.pdf$/i', '', basename($filename));
+    $stem = preg_replace('/\.(pdf|jpe?g|png|heic|heif|webp|gif)$/i', '', basename($filename));
     q("INSERT INTO scores (title, original_filename, page_count, conti_date, file_hash, confirmed, status, status_detail)
        VALUES (?, ?, ?, ?, ?, 0, 'processing', '올리는 중')",
       [mb_substr($stem, 0, 250), mb_substr($filename, 0, 250), $pageCount, guess_date($stem), $hash ?: null]);
@@ -309,6 +309,15 @@ function api_finish_score(int $id): array
     foreach ($rows as $r) $byN[(int)$r['page_number']] = $r;
     for ($n = 1; $n <= $count; $n++) {
         if (empty($byN[$n]['analyzed'])) $missing[] = $n;
+    }
+    if ($missing && !empty(body_json()['allow_unread'])) {
+        // 사진 업로드: AI가 못 읽은 장은 '제목 없음' 곡 하나씩으로 두고, 사람이 제목·키를 적는다
+        foreach ($missing as $n) {
+            store_page_result($id, ['page_number' => $n, 'title_guess' => '', 'has_title' => true, 'key_explicit' => '',
+                                    'chords' => [], 'lyrics_text' => '']);
+            $byN[$n]['analyzed'] = 1;
+        }
+        $missing = [];
     }
     if ($missing) throw new ApiError(400, '아직 안 읽은 페이지가 있어요: ' . implode(', ', array_slice($missing, 0, 10)) . '쪽');
     $pages = page_dicts($id, 1, $count);

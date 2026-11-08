@@ -146,6 +146,93 @@ async function clientUploadPdf(file, onProgress) {
   }
 }
 
+/* ============================================================
+   사진(JPG·PNG·아이폰 사진)으로 올리기 — 한 번에 고른 사진들 = 콘티 하나 (사진 한 장 = 한 쪽)
+   AI가 제목·키를 읽어 곡으로 나누고, 못 읽은 사진은 '제목 없음' 곡으로 남겨 직접 적게 한다
+   ============================================================ */
+const isImageFile = f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|heif|webp|gif)$/i.test(f.name);
+
+async function decodeImage(file) {
+  try {
+    return await createImageBitmap(file, { imageOrientation: 'from-image' });   // 사진 회전 정보 반영
+  } catch { /* 옛 브라우저 → 아래 방법 */ }
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    return img;
+  } catch {
+    const heic = /\.(heic|heif)$/i.test(file.name);
+    throw new Error(`"${file.name}" 사진을 열 수 없어요${heic ? ' (HEIC 형식 — 아이폰에서 바로 올리거나 JPG로 바꿔 올려주세요)' : ''}`);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** 사진 → JPEG Blob (흰 바탕, 작은 사진은 키우지 않음) */
+async function imageToJpeg(src, targetWidth, quality = 0.85) {
+  const w = src.width, h = src.height;
+  let scale = Math.min(1, targetWidth / w);
+  if (h * scale > 4000) scale = 4000 / h;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(w * scale));
+  canvas.height = Math.max(1, Math.round(h * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+  canvas.width = canvas.height = 0;
+  if (!blob) throw new Error('사진을 바꾸지 못했어요');
+  return blob;
+}
+
+async function clientUploadImages(files, label, onProgress) {
+  const pageCount = files.length;
+  onProgress?.('사진 여는 중');
+  const hashes = [];
+  for (const f of files) hashes.push(await sha256Hex(await f.arrayBuffer()));
+  const hash = hashes.every(Boolean) ? await sha256Hex(new TextEncoder().encode(hashes.join(','))) : '';
+  let conti = await apiJson('/api/scores', jsonBody('POST', { filename: label, page_count: pageCount, file_hash: hash }));
+  if (conti.duplicate) return conti;
+
+  try {
+    for (let n = 1; n <= pageCount; n++) {
+      onProgress?.(`올리는 중 ${n}/${pageCount}장`);
+      const src = await decodeImage(files[n - 1]);
+      const fd = new FormData();
+      fd.append('image', await imageToJpeg(src, PAGE_IMAGE_WIDTH), `p${n}.jpg`);
+      // 쪽 크기는 PDF처럼 폭 595 기준으로 (필기·내보내기가 같은 비율을 쓰게)
+      fd.append('width', '595');
+      fd.append('height', String(Math.round(595 * src.height / src.width)));
+      if (n === 1) fd.append('thumb', await imageToJpeg(src, THUMB_WIDTH, 0.8), 'thumb.jpg');
+      src.close?.();
+      await postWithRetry(`/api/scores/${conti.id}/pages/${n}`, { method: 'POST', body: fd }, `${n}번째 사진 올리기`);
+    }
+    // AI 읽기: 실패한 장이 있어도 멈추지 않는다
+    let unread = 0, done = 0;
+    const nums = Array.from({ length: pageCount }, (_, i) => i + 1);
+    onProgress?.(`AI가 읽는 중 0/${pageCount}장`);
+    await runLimited(nums, READ_PARALLEL, async n => {
+      try {
+        await postWithRetry(`/api/scores/${conti.id}/pages/${n}/read`, jsonBody('POST', { reuse: true }), `${n}번째 사진 읽기`);
+      } catch (e) {
+        console.warn(e);
+        unread++;
+      }
+      onProgress?.(`AI가 읽는 중 ${++done}/${pageCount}장`);
+    });
+    onProgress?.('곡 나누는 중');
+    conti = await postWithRetry(`/api/scores/${conti.id}/finish`, jsonBody('POST', { first_upload: true, allow_unread: true }), '곡 나누기');
+    conti.unread = unread;
+    return conti;
+  } catch (e) {
+    await markFailed(conti.id, e.message);
+    throw e;
+  }
+}
+
 /** "처음부터 다시 분석": 저장된 페이지 그림을 제미나이로 다시 읽는다 (브라우저가 열려 있는 동안 진행) */
 const ReprocessJobs = new Set();
 

@@ -69,7 +69,7 @@ function q_val(string $sql, array $params = []) { $r = q($sql, $params)->fetchCo
 
 function marks_sql(array $ids): string { return implode(',', array_fill(0, count($ids), '?')); }
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 function ensure_schema(PDO $pdo): void
 {
@@ -150,6 +150,16 @@ function ensure_schema(PDO $pdo): void
         ip VARCHAR(64) PRIMARY KEY,
         cnt INT NOT NULL DEFAULT 0,
         last_ts INT NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    // 접속자 세기: 기기 하나 = 하루 한 줄 (vid 는 브라우저가 만든 무작위 값)
+    $pdo->exec("CREATE TABLE IF NOT EXISTS visits (
+        vid VARCHAR(40) NOT NULL,
+        day DATE NOT NULL,
+        role VARCHAR(8) NOT NULL DEFAULT '',
+        first_ts INT NOT NULL,
+        last_ts INT NOT NULL,
+        PRIMARY KEY (vid, day),
+        KEY idx_visits_last (last_ts)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     @mkdir(DATA_DIR . '/scores', 0755, true);
     @file_put_contents($flag, date('c'));

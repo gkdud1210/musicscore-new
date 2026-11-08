@@ -378,7 +378,7 @@ function renderSongs() {
     const filtered = LibState.q || LibState.selectedKeys.size || LibState.selectedChords.size || LibState.selectedMark
       || LibState.selectedSection || LibState.selectedTempo;
     document.getElementById('songsEmptyTitle').textContent = filtered ? '조건에 맞는 곡이 없어요' : '아직 업로드한 콘티가 없어요';
-    document.getElementById('songsEmptySub').textContent = filtered ? '검색어나 키 필터를 바꿔보세요' : '위의 "콘티 PDF 업로드" 버튼으로 PDF를 올려보세요';
+    document.getElementById('songsEmptySub').textContent = filtered ? '검색어나 키 필터를 바꿔보세요' : '위의 "PDF·사진 업로드" 버튼으로 올려보세요';
     empty.classList.remove('hidden');
     return;
   }
@@ -1372,15 +1372,28 @@ const isPdfFile = f => f.name.toLowerCase().endsWith('.pdf') || f.type === 'appl
 const UploadQueue = { items: [], running: false };
 
 function uploadFiles(files) {
-  const pdfs = files.filter(isPdfFile)
-    .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }));
-  const skipped = files.length - pdfs.length;
-  if (!pdfs.length) {
-    if (files.length) showToast('PDF 파일만 업로드할 수 있어요.', 'error');
+  const byName = (a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true });
+  const pdfs = files.filter(isPdfFile).sort(byName);
+  const images = files.filter(f => !isPdfFile(f) && isImageFile(f)).sort(byName);
+  const skipped = files.length - pdfs.length - images.length;
+  if (!pdfs.length && !images.length) {
+    if (files.length) showToast('PDF나 사진(JPG·PNG)만 올릴 수 있어요.', 'error');
     return;
   }
-  if (skipped) showToast(`PDF가 아닌 파일 ${skipped}개는 건너뛰었어요.`, 'info');
+  if (skipped) showToast(`PDF·사진이 아닌 파일 ${skipped}개는 건너뛰었어요.`, 'info');
   pdfs.forEach(f => UploadQueue.items.push({ file: f, status: 'wait', note: '' }));
+  if (images.length) {
+    if (!isPhpServer()) {
+      showToast('사진 올리기는 카페24 서버에서만 돼요. PDF로 올려주세요.', 'error');
+    } else {
+      // 한 번에 고른 사진들 = 콘티 하나 (사진 한 장 = 한 쪽)
+      const d = new Date();
+      const label = `사진 ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+        + (images.length > 1 ? ` (${images.length}장)` : '');
+      UploadQueue.items.push({ file: { name: label }, images, status: 'wait', note: '' });
+    }
+  }
+  if (!UploadQueue.items.length) return;
   renderUploadList();
   if (!UploadQueue.running) runUploadQueue();
 }
@@ -1433,7 +1446,9 @@ async function runUploadQueue() {
     renderUploadList();
     try {
       let conti;
-      if (isPhpServer()) {
+      if (it.images) {
+        conti = await clientUploadImages(it.images, it.file.name, detail => { it.note = detail; renderUploadList(); });
+      } else if (isPhpServer()) {
         // 카페24: 브라우저가 페이지를 그림으로 바꿔 올리고, 서버가 한 장씩 읽는다
         conti = await clientUploadPdf(it.file, detail => { it.note = detail; renderUploadList(); });
       } else {
@@ -1454,6 +1469,10 @@ async function runUploadQueue() {
         if (conti.status === 'error') throw new Error(conti.status_detail || '분석 실패');
         it.status = 'ok';
         it.note = `곡 ${conti.songs.length}개`;
+        if (conti.unread) {
+          it.note += ` · AI가 못 읽은 사진 ${conti.unread}장`;
+          showToast(`AI가 사진 ${conti.unread}장을 못 읽었어요. 콘티 화면에서 '제목 없음' 곡의 제목과 키를 직접 적어주세요.`, 'info', 8000);
+        }
       }
     } catch (e) {
       console.error(e);

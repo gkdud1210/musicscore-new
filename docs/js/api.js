@@ -311,7 +311,90 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
   renderHeaderAccount();
   initInstallButton();
+  startPresence();
 });
+
+/* ============================================================
+   접속자 수 — 화면이 열려 있는 동안 1분마다 "여기 있어요" 신호,
+   관리자에게는 위에 "👀 지금 N명" (누르면 오늘·최근 7일)
+   ============================================================ */
+function presenceId() {
+  try {
+    let id = localStorage.getItem('jandi_vid');
+    if (!id) {
+      id = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, '0')).join('');
+      localStorage.setItem('jandi_vid', id);
+    }
+    return id;
+  } catch { return ''; }   // 개인정보 보호 모드 등 — 서버가 IP로 대신 셈
+}
+
+function startPresence() {
+  if (AuthState.server !== 'php' || (AuthState.auth && !AuthState.role)) return;
+  const vid = presenceId();
+  const ping = () => {
+    if (document.visibilityState !== 'visible') return;
+    fetch(`${API_BASE}/api/ping`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vid }),
+    }).catch(() => {});
+  };
+  ping();
+  setInterval(ping, 60000);
+  document.addEventListener('visibilitychange', ping);
+  if (AuthState.canEdit && AuthState.hasAdmin) initVisitorBadge();
+}
+
+function initVisitorBadge() {
+  const box = document.getElementById('headerAccount');
+  if (!box) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'header-account-btn visitor-badge';
+  btn.textContent = '👀 …';
+  btn.title = '지금 접속 중인 사람 (누르면 오늘·최근 7일)';
+  box.prepend(btn);
+  const panel = document.createElement('div');
+  panel.className = 'visitor-panel hidden';
+  document.body.appendChild(panel);
+  let last = null;
+  const draw = () => {
+    if (!last) return;
+    const max = Math.max(1, ...last.days.map(d => d.count));
+    const wd = ['일', '월', '화', '수', '목', '금', '토'];
+    panel.innerHTML = `
+      <div class="visitor-panel-head">
+        <b>지금 ${last.now}명</b>
+        <span>관리자 ${last.now_admin} · 팀원 ${last.now_member}</span>
+      </div>
+      <div class="visitor-panel-today">오늘 들어온 기기 <b>${last.today}대</b></div>
+      <div class="visitor-days">${last.days.map(d => {
+        const dt = new Date(d.day + 'T00:00:00');
+        return `<div class="visitor-day"><span class="visitor-bar" style="height:${Math.max(2, Math.round(d.count / max * 56))}px"></span>
+          <b>${d.count}</b><small>${dt.getMonth() + 1}/${dt.getDate()} ${wd[dt.getDay()]}</small></div>`;
+      }).join('')}</div>
+      <p class="visitor-note">같은 기기는 하루 한 번만 세요. "지금"은 최근 2~3분 안에 화면을 보고 있던 기기예요.</p>`;
+  };
+  const load = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/visitors`);
+      if (!res.ok) return;
+      last = await res.json();
+      btn.textContent = `👀 지금 ${last.now}명`;
+      draw();
+    } catch { /* 다음에 다시 */ }
+  };
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const r = btn.getBoundingClientRect();
+    panel.style.top = `${r.bottom + 8}px`;
+    panel.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) load();
+  });
+  document.addEventListener('click', e => { if (!panel.contains(e.target)) panel.classList.add('hidden'); });
+  setTimeout(load, 1500);   // 내 첫 신호가 먼저 들어가게
+  setInterval(() => { if (document.visibilityState === 'visible') load(); }, 60000);
+}
 
 function renderHeaderAccount() {
   const header = document.querySelector('.header-inner');
