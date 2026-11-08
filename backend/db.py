@@ -109,6 +109,12 @@ def init_db():
         # 분석은 백그라운드에서: processing(분석 중) → ready / error. detail = 진행 상황·오류 메시지
         _add_column_if_missing(conn, "scores", "status", "status TEXT NOT NULL DEFAULT 'ready'")
         _add_column_if_missing(conn, "scores", "status_detail", "status_detail TEXT NOT NULL DEFAULT ''")
+        # 설교 전/후 찬양 (콘티마다 다름), 느린/빠른 찬양 (곡마다), 기존 악보에서 가져온 곡이면 원래 곡 id
+        _add_column_if_missing(conn, "songs", "section", "section TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "songs", "tempo", "tempo TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "songs", "matched_from", "matched_from INTEGER")
+        from dedupe import init_dedupe_db
+        init_dedupe_db(conn)
 
 
 def score_dir(score_id: int) -> str:

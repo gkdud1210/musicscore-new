@@ -985,3 +985,52 @@ function getKeyDescription(key, scale) {
   if (scale?.toLowerCase() === 'minor') return minorDesc[key] || `(${key} 단조)`;
   return majorDesc[key] || `(${key} 장조)`;
 }
+
+/* ============================================================
+   ⚡ 바로 변환하기 (맨 위 카드): 파일 고르기 → 분석 → (키를 골랐으면) 변환까지 한 번에
+   ============================================================ */
+(function initQuickCard() {
+  const drop = document.getElementById('quickDrop');
+  const input = document.getElementById('quickFile');
+  const go = document.getElementById('quickGo');
+  if (!drop || !input || !go) return;
+  let file = null;
+
+  const pick = f => {
+    if (!f) return;
+    file = f;
+    document.getElementById('quickFileName').textContent = `✓ ${f.name}`;
+    drop.classList.add('has-file');
+    go.disabled = false;
+  };
+  input.addEventListener('change', () => pick(input.files[0]));
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag-over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag-over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    drop.classList.remove('drag-over');
+    pick(e.dataTransfer.files[0]);
+  });
+
+  go.addEventListener('click', async () => {
+    if (!file) return;
+    handleFileSelect(file);                       // 아래 STEP 1 과 같은 검사·미리보기
+    if (AppState.uploadedFile !== file) return;   // 지원하지 않는 파일이면 거기서 안내
+    go.disabled = true;
+    go.textContent = '분석하는 중...';
+    try {
+      AppState.analysisData = null;
+      await analyzeScore();
+      if (!AppState.analysisData?.success) return;
+      const target = document.getElementById('quickTarget').value;
+      if (target) {
+        const [key, mode] = target.split('|');
+        selectTargetKey(key, mode);
+        await transposeScore();
+      }
+    } finally {
+      go.disabled = false;
+      go.textContent = '🔄 업로드하고 변환하기';
+    }
+  });
+})();

@@ -24,7 +24,12 @@ const LibState = {
   marks: {},              // 곡 묶음(groupKey) → ['⭐', '❤️', ...] (팀 공용 즐겨찾기 표시)
   palette: [],
   selectedMark: null,     // 즐겨찾기 필터
+  selectedSection: null,  // 'before'(설교 전) | 'after'(설교 후)
+  selectedTempo: null,    // 'slow' | 'fast'
 };
+
+const SECTION_LABEL = { before: '설교 전', after: '설교 후' };
+const TEMPO_LABEL = { slow: '느린', fast: '빠른' };
 
 window.addEventListener('DOMContentLoaded', () => {
   initBackgroundParticlesIfPresent();
@@ -137,6 +142,7 @@ async function refreshAll() {
     document.getElementById('contisTabCount').textContent = contis.length ? `(${contis.length})` : '';
     renderMarkChips();
     renderKeyChips();
+    renderCategoryChips();
     renderChordChips();
     renderContis();
     await fetchSongs();
@@ -150,6 +156,8 @@ async function refreshAll() {
 function resetFilters() {
   LibState.q = '';
   LibState.selectedMark = null;
+  LibState.selectedSection = null;
+  LibState.selectedTempo = null;
   LibState.selectedKeys.clear();
   LibState.selectedChords.clear();
   const input = document.getElementById('librarySearch');
@@ -161,6 +169,8 @@ async function fetchSongs() {
   if (LibState.q) params.set('q', LibState.q);
   if (LibState.selectedKeys.size) params.set('key', [...LibState.selectedKeys].join(','));
   if (LibState.selectedChords.size) params.set('chords', [...LibState.selectedChords].join(','));
+  if (LibState.selectedSection) params.set('section', LibState.selectedSection);
+  if (LibState.selectedTempo) params.set('tempo', LibState.selectedTempo);
   try {
     const songs = await apiJson(`/api/songs?${params}`);
     LibState.groups = groupSongs(songs);
@@ -171,16 +181,32 @@ async function fetchSongs() {
   }
 }
 
-/** 같은 곡(제목이 같은 것)이 여러 콘티에 들어있으면 카드 하나로 묶는다. */
+/** 같은 곡이 여러 콘티에 들어있으면 카드 하나로 묶는다.
+ *  제목이 같거나, 악보 그림이 같으면(sheet_id) 같은 곡. */
 function groupSongs(songs) {
+  const parent = new Map();
+  const find = k => { while (parent.get(k) !== k) { parent.set(k, parent.get(parent.get(k))); k = parent.get(k); } return k; };
+  const link = (a, b) => {
+    for (const k of [a, b]) if (!parent.has(k)) parent.set(k, k);
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parent.set(rb, ra);
+  };
+  const titleKey = s => normTitle(s.title) || `__song${s.id}`;
+  for (const s of songs) link('t:' + titleKey(s), 'sheet:' + (s.sheet_id || s.id));
   const map = new Map();
   for (const s of songs) {
-    const k = normTitle(s.title) || `__song${s.id}`;
-    if (!map.has(k)) map.set(k, { key: k, versions: [] });
-    map.get(k).versions.push(s);
+    const root = find('t:' + titleKey(s));
+    if (!map.has(root)) map.set(root, { versions: [] });
+    map.get(root).versions.push(s);
   }
   const groups = [...map.values()];
   for (const g of groups) {
+    // 즐겨찾기는 제목 기준으로 저장돼 있으니, 표시가 붙은 제목이 있으면 그걸 묶음 이름으로
+    const titles = g.versions.map(titleKey);
+    const counts = new Map();
+    titles.forEach(t => counts.set(t, (counts.get(t) || 0) + 1));
+    g.key = titles.find(t => (LibState.marks[t] || []).length)
+      || [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
     g.versions.sort((a, b) => String(b.conti_date || '').localeCompare(String(a.conti_date || '')) || b.id - a.id);
     g.main = g.versions[0];
     g.keys = [...new Set(g.versions.map(v => v.key).filter(Boolean))].sort((a, b) => keySortIndex(a) - keySortIndex(b));
@@ -275,6 +301,24 @@ function rerenderMarks() {
   if (LibState.modal?.type === 'song') renderSongModal();
 }
 
+function renderCategoryChips() {
+  const el = document.getElementById('categoryChips');
+  if (!el) return;
+  const cats = LibState.facets.categories || {};
+  const chip = (kind, val, label) => {
+    const on = (kind === 'section' ? LibState.selectedSection : LibState.selectedTempo) === val;
+    return `<button type="button" class="lib-chord-chip cat-chip cat-${val}${on ? ' active' : ''}" data-action="cat-filter"
+      data-kind="${kind}" data-val="${val}">${label} <span class="lib-chip-count">${cats[val] || 0}</span></button>`;
+  };
+  el.innerHTML = chip('section', 'before', '🙏 설교 전 찬양') + chip('section', 'after', '🕊 설교 후 찬양')
+    + chip('tempo', 'slow', '🐢 느린 찬양') + chip('tempo', 'fast', '🐇 빠른 찬양')
+    + (Object.values(cats).some(Boolean) ? '' : '<span class="lib-chord-empty">콘티를 열어 곡마다 설교 전/후, 느린/빠른을 골라주세요</span>');
+}
+
+function songTags(s) {
+  return `${s.section ? `<span class="song-tag tag-${s.section}">${SECTION_LABEL[s.section]}</span>` : ''}${s.tempo ? `<span class="song-tag tag-${s.tempo}">${TEMPO_LABEL[s.tempo]}</span>` : ''}`;
+}
+
 function renderKeyChips() {
   const el = document.getElementById('keyFilterChips');
   const keys = [...LibState.facets.keys].sort((a, b) => keySortIndex(a.key) - keySortIndex(b.key));
@@ -314,7 +358,8 @@ function renderSongs() {
 
   if (!groups.length) {
     grid.innerHTML = '';
-    const filtered = LibState.q || LibState.selectedKeys.size || LibState.selectedChords.size || LibState.selectedMark;
+    const filtered = LibState.q || LibState.selectedKeys.size || LibState.selectedChords.size || LibState.selectedMark
+      || LibState.selectedSection || LibState.selectedTempo;
     document.getElementById('songsEmptyTitle').textContent = filtered ? '조건에 맞는 곡이 없어요' : '아직 업로드한 콘티가 없어요';
     document.getElementById('songsEmptySub').textContent = filtered ? '검색어나 키 필터를 바꿔보세요' : '위의 "콘티 PDF 업로드" 버튼으로 PDF를 올려보세요';
     empty.classList.remove('hidden');
@@ -332,6 +377,13 @@ function addButton(song, extraCls = '') {
   const on = inSetlist(song.id);
   return `<button type="button" class="song-add-btn${on ? ' on' : ''} ${extraCls}" data-action="toggle-set" data-id="${song.id}">
     ${on ? '✓ 담김' : '＋ 콘티에 담기'}</button>`;
+}
+
+function groupTags(g) {
+  const sec = [...new Set(g.versions.map(v => v.section).filter(Boolean))];
+  const tem = [...new Set(g.versions.map(v => v.tempo).filter(Boolean))];
+  if (!sec.length && !tem.length) return '';
+  return `<div class="song-tags">${sec.map(x => `<span class="song-tag tag-${x}">${SECTION_LABEL[x]}</span>`).join('')}${tem.map(x => `<span class="song-tag tag-${x}">${TEMPO_LABEL[x]}</span>`).join('')}</div>`;
 }
 
 function renderSongCard(g) {
@@ -354,6 +406,7 @@ function renderSongCard(g) {
       <div class="lib-card-body">
         <p class="lib-card-title" data-action="open-song" data-group="${escapeHtml(g.key)}">${marksOf(g.key).length ? `<span class="card-marks">${marksOf(g.key).join('')}</span> ` : ''}${escapeHtml(s.title)}</p>
         <p class="song-meta">${meta}</p>
+        ${groupTags(g)}
         ${otherKeys}
       </div>
       <div class="song-card-actions">${addButton(s)}</div>
@@ -383,8 +436,9 @@ async function loadAllVersions() {
   if (!modal || modal.type !== 'song') return;
   try {
     const target = normTitle(modal.title);
-    const all = await apiJson(`/api/songs?q=${encodeURIComponent(modal.title)}`);
-    const versions = all.filter(s => normTitle(s.title) === target);
+    const sheets = new Set((modal.versions || []).map(v => v.sheet_id));
+    const all = await apiJson('/api/songs');
+    const versions = all.filter(s => normTitle(s.title) === target || sheets.has(s.sheet_id));
     if (versions.length && LibState.modal === modal) {
       modal.versions = sortVersions(versions);
       renderSongModal();
@@ -403,9 +457,45 @@ function renderSongModal() {
     <h2 class="lib-modal-title">${escapeHtml(versions[0].title)}</h2>
     <p class="lib-modal-sub">${contiCount > 1 ? `${contiCount}개 콘티에서 사용했어요` : '1개 콘티에서 사용했어요'}</p>
     ${markPicker(m.groupKey)}
+    ${tempoPicker(versions)}
     ${renderSongContis(versions)}
-    <h3 class="song-section-title">🎼 악보 <span>${versions.length}</span></h3>
-    ${versions.map(renderSongVersion).join('')}`;
+    ${renderSheets(versions)}`;
+}
+
+/** 빠르기(느린/빠른)는 곡의 성질이라 이 곡의 모든 악보에 한 번에 */
+function tempoPicker(versions) {
+  const cur = versions.find(v => v.tempo)?.tempo || '';
+  return `<div class="mark-picker tempo-picker" role="group" aria-label="빠르기">
+    <span class="mark-picker-label">빠르기</span>
+    ${['slow', 'fast'].map(t => `<button type="button" class="tempo-btn${cur === t ? ' on' : ''}" data-action="set-group-tempo"
+      data-tempo="${cur === t ? '' : t}" ${AuthState.canEdit ? '' : 'disabled'}>${t === 'slow' ? '🐢 느린 찬양' : '🐇 빠른 찬양'}</button>`).join('')}
+  </div>`;
+}
+
+async function setGroupTempo(tempo) {
+  const m = LibState.modal;
+  if (!m || m.type !== 'song') return;
+  // 같은 악보끼리는 서버가 같이 바꿔주니, 악보 묶음마다 하나씩만 보낸다
+  const reps = [...new Map(m.versions.map(v => [v.sheet_id, v])).values()];
+  try {
+    for (const v of reps) await apiJson(`/api/songs/${v.id}`, jsonBody('PATCH', { tempo }));
+    m.versions.forEach(v => { v.tempo = tempo; });
+    renderSongModal();
+    LibState.modalDirty = true;
+    showToast(tempo ? `${TEMPO_LABEL[tempo]} 찬양으로 표시했어요` : '빠르기 표시를 지웠어요', 'success');
+  } catch (e) {
+    showToast('저장 실패: ' + e.message, 'error');
+  }
+}
+
+/** 같은 그림의 악보는 한 번만 보여주고, 어느 콘티들에 쓰였는지 적는다 */
+function renderSheets(versions) {
+  const bySheet = new Map();
+  versions.forEach(v => { if (!bySheet.has(v.sheet_id)) bySheet.set(v.sheet_id, []); bySheet.get(v.sheet_id).push(v); });
+  const sheets = [...bySheet.values()];
+  return `<h3 class="song-section-title">🎼 악보 <span>${sheets.length}</span>
+      ${versions.length > sheets.length ? `<small class="sheet-dup-note">같은 악보는 하나로 모았어요 (콘티 ${versions.length}곳)</small>` : ''}</h3>
+    ${sheets.map(list => renderSongVersion(list[0], list)).join('')}`;
 }
 
 /** 이 곡이 들어간 콘티 목록 — 콘티마다 전체 곡 순서를 보여주고, 이 곡은 강조 */
@@ -446,8 +536,10 @@ function renderSongContis(versions) {
     </section>`;
 }
 
-function renderSongVersion(s) {
+function renderSongVersion(s, same = [s]) {
   const range = s.page_start === s.page_end ? `p.${s.page_start}` : `p.${s.page_start}–${s.page_end}`;
+  const usedIn = same.length > 1
+    ? `<p class="sheet-used-in">🔁 이 악보가 쓰인 콘티 ${same.length}곳: ${same.map(v => escapeHtml(v.conti_date || v.conti_title)).join(', ')}</p>` : '';
   return `
     <div class="song-version" data-song="${s.id}">
       <div class="song-version-head">
@@ -463,6 +555,7 @@ function renderSongVersion(s) {
           <a class="btn-sm" href="viewer.html?id=${s.score_id}&page=${s.page_start}">✍️ 필기</a>
         </div>
       </div>
+      ${usedIn}
       <form class="song-edit admin-only hidden" id="songEdit-${s.id}" data-action-submit="save-song" data-id="${s.id}">
         <input type="text" name="title" class="lib-edit-title-input" value="${escapeHtml(s.title)}" placeholder="제목" />
         <input type="text" name="key" class="lib-edit-title-input song-key-input" value="${escapeHtml(s.key)}" placeholder="키 (예: G, Bb, Am)" />
@@ -515,10 +608,10 @@ function renderContis() {
     <div class="conti-row${c.confirmed ? '' : ' pending'}">
       <div class="conti-thumb lib-card-thumb" data-action="open-conti" data-id="${c.id}">${img(c.thumbnail_url, c.title)}</div>
       <div class="conti-info">
-        <p class="conti-title" data-action="open-conti" data-id="${c.id}">${c.status === 'processing' ? `<span class="pending-badge processing">분석 중 ${escapeHtml(c.status_detail || '')}</span> ` : c.confirmed ? '' : '<span class="pending-badge">확인 필요</span> '}${escapeHtml(c.title)}</p>
+        <p class="conti-title" data-action="open-conti" data-id="${c.id}">${(c.overlaps || []).some(o => o.kind !== 'partial') ? '<span class="pending-badge dup">겹치는 콘티</span> ' : ''}${c.status === 'processing' ? `<span class="pending-badge processing">분석 중 ${escapeHtml(c.status_detail || '')}</span> ` : c.confirmed ? '' : '<span class="pending-badge">확인 필요</span> '}${escapeHtml(c.title)}</p>
         <p class="song-meta">${c.conti_date ? `📅 ${escapeHtml(c.conti_date)} · ` : ''}${c.songs.length}곡 · ${c.page_count}페이지</p>
         <div class="conti-songs">
-          ${c.songs.map((s, i) => `<span class="conti-song-chip">${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</span>`).join('')
+          ${c.songs.map((s, i) => `<span class="conti-song-chip${s.section ? ' sec-' + s.section : ''}" title="${s.section ? SECTION_LABEL[s.section] : ''}">${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</span>`).join('')
             || '<span class="lib-card-nochords">곡이 없어요 — "곡 나누기·수정"에서 분석해주세요</span>'}
         </div>
       </div>
@@ -617,6 +710,7 @@ function renderContiModal(conti, songs) {
         </p>
         ${confirmBtn}
       </div>` : ''}
+    ${overlapBanner(conti)}
     <form class="conti-edit-head" data-action-submit="save-conti" data-id="${conti.id}">
       <input type="text" name="title" class="lib-edit-title-input conti-title-input" value="${escapeHtml(conti.title)}" />
       <input type="date" name="conti_date" class="lib-edit-title-input" value="${escapeHtml(conti.conti_date || '')}" />
@@ -654,6 +748,13 @@ function renderContiModal(conti, songs) {
             ${isFirst ? '' : `<button type="button" class="btn-sm" data-action="merge-prev" data-id="${s.id}" title="앞 곡의 다음 페이지로 합치기">⤴ 앞 곡과 합치기</button>`}
             <button type="button" class="btn-sm" data-action="delete-song" data-id="${s.id}">곡에서 빼기</button>
             ${addButton(s)}
+            <div class="song-cats">
+              ${choiceChip('section', 'before', '설교 전', s.section)}${choiceChip('section', 'after', '설교 후', s.section)}
+              <span class="song-cats-sep"></span>
+              ${choiceChip('tempo', 'slow', '🐢 느린', s.tempo)}${choiceChip('tempo', 'fast', '🐇 빠른', s.tempo)}
+              ${isFirst ? '' : `<button type="button" class="btn-link from-here" data-action="from-here-after" data-index="${songIndex - 1}" title="앞 곡들은 설교 전, 이 곡부터는 설교 후로">⬇ 여기부터 설교 후</button>`}
+              ${s.matched ? '<span class="matched-badge" title="전에 확인한 콘티에 같은 악보가 있어서 제목·키를 가져왔어요">🔁 전에 확인한 악보</span>' : ''}
+            </div>
           </form>
           ${suspicious ? '<p class="conti-hint">코드와 키를 찾지 못했어요. 표지·순서지라면 "곡에서 빼기"를 눌러주세요.</p>' : ''}
           <div class="song-pages small">
@@ -680,10 +781,61 @@ function renderContiModal(conti, songs) {
   updateSaveAllBar();
 }
 
+/** 설교 전/후, 느린/빠른 고르기 (같은 줄에서 하나만, 다시 누르면 해제) */
+function choiceChip(name, value, label, current) {
+  return `<label class="choice-chip choice-${value}"><input type="checkbox" name="${name}" value="${value}"${current === value ? ' checked' : ''} />${label}</label>`;
+}
+
+function choiceValue(form, name) {
+  return form.querySelector(`input[name="${name}"]:checked`)?.value || '';
+}
+
+/** "여기부터 설교 후": 앞 곡들은 설교 전, 이 곡부터 끝까지 설교 후 (저장은 전체 저장으로) */
+function sectionFromHere(index) {
+  const forms = [...document.querySelectorAll('#libModalBody form[data-action-submit="save-song"]')];
+  forms.forEach((f, i) => {
+    const want = i < index ? 'before' : 'after';
+    f.querySelectorAll('input[name="section"]').forEach(c => { c.checked = c.value === want; });
+  });
+  updateSaveAllBar();
+  showToast(`1~${index}번 곡은 설교 전, ${index + 1}번부터 설교 후로 골랐어요. "전체 저장"을 눌러주세요.`, 'info', 4000);
+}
+
+const OVERLAP_TEXT = {
+  same: '똑같은 콘티',
+  inside: '이 콘티가 통째로 들어있는 콘티',
+  contains: '이 콘티 안에 통째로 들어있는 콘티',
+  partial: '절반 넘게 겹치는 콘티',
+};
+
+function overlapBanner(conti) {
+  const list = conti.overlaps || [];
+  if (!list.length) return '';
+  return `<div class="overlap-banner">
+    <p class="overlap-title">🔁 겹치는 콘티가 있어요</p>
+    ${list.map(o => {
+      const name = `"${escapeHtml(o.title)}"${o.conti_date ? ` (${escapeHtml(o.conti_date)})` : ''}`;
+      const strong = o.kind !== 'partial';
+      return `<div class="overlap-row">
+        <span><b>${OVERLAP_TEXT[o.kind]}</b>: ${name} · 같은 페이지 ${o.shared}쪽</span>
+        <button type="button" class="btn-sm" data-action="open-conti" data-id="${o.id}">열어보기</button>
+        ${!strong ? '' : o.kind === 'contains'
+          ? `<button type="button" class="btn-sm danger" data-action="delete-dup" data-id="${o.id}" data-keep="${escapeHtml(conti.title)}" data-here="1">🗑 저 콘티 지우기 (이 콘티만 남김)</button>`
+          : `<button type="button" class="btn-sm danger" data-action="delete-dup" data-id="${conti.id}" data-keep="${escapeHtml(o.title)}">🗑 이 콘티 지우기 (저쪽만 남김)</button>`}
+      </div>`;
+    }).join('')}
+    <p class="overlap-sub">같은 악보는 곡 찾기에서 하나로 모아서 보여줘요. 콘티를 지워도 다른 콘티의 악보는 그대로예요.</p>
+  </div>`;
+}
+
 /* ── 콘티 화면: 여러 곡을 고친 뒤 한 번에 저장 ───────────── */
+function fieldChanged(i) {
+  return i.type === 'checkbox' || i.type === 'radio' ? i.checked !== i.defaultChecked : i.value !== i.defaultValue;
+}
+
 function dirtyContiForms() {
   return [...document.querySelectorAll('#libModalBody form[data-action-submit]')].filter(f =>
-    [...f.querySelectorAll('input[name]')].some(i => i.value !== i.defaultValue));
+    [...f.querySelectorAll('input[name]')].some(fieldChanged));
 }
 
 function updateSaveAllBar() {
@@ -714,10 +866,15 @@ async function saveAllConti({ reload = true, quiet = false } = {}) {
       } else {
         const title = f.elements.title.value.trim();
         const key = f.elements.key.value.trim();
-        await apiJson(`/api/songs/${id}`, jsonBody('PATCH', { title, key }));
+        const body = { title, key };
+        if (f.querySelector('input[name="section"]')) {
+          body.section = choiceValue(f, 'section');
+          body.tempo = choiceValue(f, 'tempo');
+        }
+        await apiJson(`/api/songs/${id}`, jsonBody('PATCH', body));
         updateSetlistItem(id, { title, key });
       }
-      [...f.querySelectorAll('input[name]')].forEach(i => { i.defaultValue = i.value; });
+      [...f.querySelectorAll('input[name]')].forEach(i => { i.defaultValue = i.value; i.defaultChecked = i.checked; });
       ok++;
     } catch (e) {
       failed.push(e.message);
@@ -735,7 +892,9 @@ async function saveAllConti({ reload = true, quiet = false } = {}) {
 }
 
 function undoAllConti() {
-  document.querySelectorAll('#libModalBody form[data-action-submit] input[name]').forEach(i => { i.value = i.defaultValue; });
+  document.querySelectorAll('#libModalBody form[data-action-submit] input[name]').forEach(i => {
+    if (i.type === 'checkbox') i.checked = i.defaultChecked; else i.value = i.defaultValue;
+  });
   updateSaveAllBar();
 }
 
@@ -767,11 +926,13 @@ function renderContiModalReadOnly(conti, songs) {
     <p class="lib-modal-sub">${conti.conti_date ? `📅 ${escapeHtml(conti.conti_date)} · ` : ''}${songs.length}곡</p>
     <div class="now-row"><button type="button" class="btn-now" data-live="send-conti">📡 NOW · 지금 이 콘티 띄우기</button></div>
     ${songs.map((s, i) => `
+      ${s.section && s.section !== songs[i - 1]?.section ? `<h3 class="conti-section-head sec-${s.section}">${s.section === 'before' ? '🙏 설교 전 찬양' : '🕊 설교 후 찬양'}</h3>` : ''}
       <div class="conti-song">
         <div class="conti-song-head">
           <span class="conti-song-no">${i + 1}</span>
           <strong class="conti-song-title">${escapeHtml(s.title)}</strong>
           ${s.key ? `<span class="song-key-badge static">${escapeHtml(s.key)}</span>` : ''}
+          ${songTags({ tempo: s.tempo })}
           ${addButton(s)}
         </div>
         <div class="song-pages small">${s.image_urls.map(u => `<div class="song-page">${img(u, s.title)}</div>`).join('')}</div>
@@ -842,6 +1003,16 @@ function initDelegatedActions() {
         }
         break;
       case 'toggle-set': e.preventDefault(); toggleSetlist(id); break;
+      case 'cat-filter': {
+        const k = el.dataset.kind === 'section' ? 'selectedSection' : 'selectedTempo';
+        LibState[k] = LibState[k] === el.dataset.val ? null : el.dataset.val;
+        if (LibState.tab !== 'songs') switchTab('songs');
+        renderCategoryChips();
+        fetchSongs();
+        break;
+      }
+      case 'set-group-tempo': setGroupTempo(el.dataset.tempo); break;
+      case 'from-here-after': sectionFromHere(Number(el.dataset.index)); break;
       case 'key-all': LibState.selectedKeys.clear(); renderKeyChips(); fetchSongs(); break;
       case 'mark-filter':
         LibState.selectedMark = el.dataset.mark && LibState.selectedMark !== el.dataset.mark ? el.dataset.mark : null;
@@ -855,6 +1026,11 @@ function initDelegatedActions() {
       case 'edit-song': document.getElementById(`songEdit-${id}`)?.classList.toggle('hidden'); break;
       case 'add-conti': addContiToSetlist(id); break;
       case 'delete-conti': deleteConti(id); break;
+      case 'delete-dup':
+        if (await deleteConti(id, `"${el.dataset.keep}"`)) {
+          if (el.dataset.here) await reloadContiModal(); else closeModal(true);
+        }
+        break;
       case 'merge-prev':
         e.preventDefault();
         contiAction(() => apiJson(`/api/songs/${id}/merge-prev`, { method: 'POST' }), '앞 곡과 합쳤어요');
@@ -919,6 +1095,12 @@ function initDelegatedActions() {
   document.addEventListener('input', e => {
     if (e.target.closest('#libModalBody form[data-action-submit]')) updateSaveAllBar();
   });
+  document.addEventListener('change', e => {
+    const c = e.target;
+    if (c.type !== 'checkbox' || !c.closest('.song-cats')) return;
+    if (c.checked) c.form.querySelectorAll(`input[name="${c.name}"]`).forEach(o => { if (o !== c) o.checked = false; });
+    updateSaveAllBar();
+  });
 }
 
 function toggleIn(set, v) {
@@ -937,17 +1119,20 @@ async function saveConti(id, form) {
   }
 }
 
-async function deleteConti(id) {
+async function deleteConti(id, keepName = '') {
   const c = LibState.contis.find(x => x.id === id);
-  if (!confirm(`"${c ? c.title : '이 콘티'}"를 삭제할까요? 안에 있는 곡 악보와 필기도 함께 삭제돼요.`)) return;
+  const keep = keepName ? `\n${keepName} 콘티와 그 악보는 그대로 남아요.` : '';
+  if (!confirm(`"${c ? c.title : '이 콘티'}"를 삭제할까요? 이 콘티에 한 필기도 함께 삭제돼요.${keep}`)) return false;
   try {
     await apiJson(`/api/scores/${id}`, { method: 'DELETE' });
     if (c) c.songs.forEach(s => removeFromSetlist(s.id, false));
     renderSetlist();
     showToast('삭제했어요.', 'info');
     refreshAll();
+    return true;
   } catch (e) {
     showToast('삭제 실패: ' + e.message, 'error');
+    return false;
   }
 }
 

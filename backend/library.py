@@ -23,6 +23,7 @@ from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+import dedupe
 from auth import role_from_request
 from db import SCORES_DIR, get_conn, score_dir
 from ocr import (
@@ -55,6 +56,9 @@ class SongBrief(BaseModel):
     key_source: str
     page_start: int
     page_end: int
+    section: str = ""
+    tempo: str = ""
+    matched: bool = False
 
 
 class ScoreSummary(BaseModel):
@@ -72,6 +76,7 @@ class ScoreSummary(BaseModel):
     confirmed: bool = True    # False면 업로드 후 아직 확인 전 → 검색에 안 나옴
     status: str = "ready"     # processing(분석 중) | ready | error
     status_detail: str = ""   # 진행 상황("3/13") 또는 오류 메시지
+    overlaps: List[dict] = [] # 겹치는 콘티 [{id, title, conti_date, shared, kind: same|inside|contains|partial}]
 
 
 class ScoreDetail(ScoreSummary):
@@ -97,11 +102,21 @@ class Song(BaseModel):
     page_end: int
     image_urls: List[str]
     lyrics_snippet: str = ""
+    sheet_id: int = 0          # 같은 악보(그림이 같은 페이지)끼리 같은 번호
+    section: str = ""          # before(설교 전) | after(설교 후) | ''
+    tempo: str = ""            # slow | fast | ''
+    matched: bool = False      # 전에 확인한 악보에서 제목·키를 가져왔음
+
+
+SECTIONS = ("", "before", "after")
+TEMPOS = ("", "slow", "fast")
 
 
 class SongUpdateRequest(BaseModel):
     title: Optional[str] = None
     key: Optional[str] = None
+    section: Optional[str] = None
+    tempo: Optional[str] = None
 
 
 class SongCreateRequest(BaseModel):
@@ -212,7 +227,17 @@ def _song_rows_for_score(conn, score_id: int):
 
 def _song_brief(r) -> SongBrief:
     return SongBrief(id=r["id"], title=r["title"], key=r["song_key"], key_source=r["key_source"],
-                     page_start=r["page_start"], page_end=r["page_end"])
+                     page_start=r["page_start"], page_end=r["page_end"],
+                     section=r["section"], tempo=r["tempo"], matched=r["matched_from"] is not None)
+
+
+def _overlaps(conn, score_id: int) -> list:
+    out = []
+    for o in dedupe.overlaps_for(conn, score_id):
+        r = conn.execute("SELECT title, conti_date, page_count FROM scores WHERE id = ?", (o["id"],)).fetchone()
+        if r:
+            out.append({**o, "title": r["title"], "conti_date": r["conti_date"], "page_count": r["page_count"]})
+    return out
 
 
 def _row_to_summary(conn, row) -> ScoreSummary:
@@ -232,6 +257,7 @@ def _row_to_summary(conn, row) -> ScoreSummary:
         status=row["status"],
         status_detail=row["status_detail"],
         songs=[_song_brief(s) for s in _song_rows_for_score(conn, row["id"])],
+        overlaps=_overlaps(conn, row["id"]),
     )
 
 
@@ -288,7 +314,7 @@ def _insert_song(conn, score_id: int, start: int, end: int) -> int:
     return cur.lastrowid
 
 
-def _analyze_and_store(conn, score_id: int, doc: "fitz.Document", pages=None):
+def _analyze_and_store(conn, score_id: int, doc: "fitz.Document", pages=None, forced=None):
     """페이지 분석 → pages 저장 → 곡 분리 → songs 저장. 기존 pages/songs는 지운다.
 
     OCR(analyze_pdf)은 스캔본이면 몇 분 걸린다. 그동안 DB 쓰기 잠금을 잡고 있으면
@@ -305,8 +331,14 @@ def _analyze_and_store(conn, score_id: int, doc: "fitz.Document", pages=None):
         [(score_id, p["page_number"], p["title_guess"], int(p["has_title"]), p["key_explicit"],
           json.dumps(p["chords"], ensure_ascii=False), p["lyrics_text"]) for p in pages],
     )
-    for start, end in segment_songs(pages):
-        _insert_song(conn, score_id, start, end)
+    # forced: 확인된 다른 콘티의 곡과 페이지가 똑같은 구간 → 그 곡의 나누기·제목·키·빠르기를 그대로
+    for start, end, src in dedupe.merge_segments(segment_songs(pages), forced or []):
+        sid = _insert_song(conn, score_id, start, end)
+        if src is not None:
+            conn.execute(
+                "UPDATE songs SET title = ?, title_manual = 1, song_key = ?, key_source = ?, tempo = ?,"
+                " matched_from = ? WHERE id = ?",
+                (src["title"], src["song_key"], src["key_source"] or "manual", src["tempo"], src["id"], sid))
 
     all_chords = sorted({c for p in pages for c in p["chords"]})
     conn.executemany("INSERT OR IGNORE INTO score_chords (score_id, chord) VALUES (?, ?)",
@@ -407,6 +439,17 @@ def _run_analysis(score_id: int, engine: str, first_upload: bool):
     try:
         n = doc.page_count
         progress = lambda done, total: _set_status(score_id, "processing", f"{label} {done}/{total}쪽")
+        # 페이지 지문 → 이미 있는 악보와 비교
+        _set_status(score_id, "processing", "같은 악보 찾는 중")
+        hashes = dedupe.compute_hashes(doc)
+        with get_conn() as conn:
+            dedupe.save_hashes(conn, score_id, hashes)
+            conn.commit()
+            reuse = dedupe.reference_pages(conn, score_id, hashes) if first_upload and engine == "ocr" else {}
+            forced = dedupe.reference_songs(conn, score_id, hashes) if engine == "ocr" else []
+            reused_pages = {pn: _page_dicts(conn, rs, rp, rp)[0] for pn, (rs, rp) in reuse.items()}
+        if reused_pages:
+            logger.info(f"[{score_id}] 같은 악보 {len(reused_pages)}/{n}쪽은 전에 읽은 결과를 씀")
         if engine == "ai":
             from ai_ocr import analyze_pdf_ai
             _set_status(score_id, "processing", f"{label} 준비 중")
@@ -415,10 +458,13 @@ def _run_analysis(score_id: int, engine: str, first_upload: bool):
             pages = []
             for i in range(n):
                 progress(i, n)
-                pages.append(ocr_analyze_page(doc, i))
+                if i + 1 in reused_pages:
+                    pages.append({**reused_pages[i + 1], "page_number": i + 1})
+                else:
+                    pages.append(ocr_analyze_page(doc, i))
         _clear_page_cache(score_id)
         with get_conn() as conn:
-            _analyze_and_store(conn, score_id, doc, pages)
+            _analyze_and_store(conn, score_id, doc, pages, forced)
             row = conn.execute("SELECT title, conti_date FROM scores WHERE id = ?", (score_id,)).fetchone()
             if first_upload and row and not row["conti_date"] and pages:
                 # 파일명에 날짜가 없으면 첫 페이지(표지/순서지) 글자에서 찾아본다
@@ -445,7 +491,9 @@ def _run_analysis(score_id: int, engine: str, first_upload: bool):
 
 
 def resume_pending_analysis():
-    """서버가 분석 도중에 다시 켜졌으면 하던 분석을 다시 시작한다."""
+    """서버가 분석 도중에 다시 켜졌으면 하던 분석을 다시 시작한다.
+    (먼저 예전에 올린 콘티의 페이지 지문을 만든다 — 같은 악보 찾기용)"""
+    _analysis_pool.submit(dedupe.backfill_missing, get_conn, _pdf_path)
     with get_conn() as conn:
         ids = [r["id"] for r in conn.execute("SELECT id FROM scores WHERE status = 'processing'")]
     for sid in ids:
@@ -542,7 +590,7 @@ def ai_status():
 #   곡 검색 / 수정 / 곡 경계 보정
 # ═══════════════════════════════════════════════════════════════
 
-def _song_from_row(r) -> Song:
+def _song_from_row(r, sheet_of: Optional[dict] = None) -> Song:
     lyrics = (r["lyrics_text"] or "").replace("\n", " ")
     return Song(
         id=r["id"],
@@ -558,6 +606,10 @@ def _song_from_row(r) -> Song:
         image_urls=[f"/api/scores/{r['score_id']}/pages/{n}/image"
                     for n in range(r["page_start"], r["page_end"] + 1)],
         lyrics_snippet=lyrics[:120],
+        sheet_id=(sheet_of or {}).get(r["id"], r["id"]),
+        section=r["section"],
+        tempo=r["tempo"],
+        matched=r["matched_from"] is not None,
     )
 
 
@@ -573,8 +625,16 @@ def search_songs(
     key: Optional[str] = Query(None, description="키(조) 필터, 쉼표 구분. 예: G,A"),
     chords: Optional[str] = Query(None, description="포함 코드 필터, 쉼표 구분 (모두 포함)"),
     score_id: Optional[int] = Query(None),
+    section: Optional[str] = Query(None, description="before | after"),
+    tempo: Optional[str] = Query(None, description="slow | fast"),
 ):
     where, params = [], []
+    if section in ("before", "after"):
+        where.append("so.section = ?")
+        params.append(section)
+    if tempo in ("slow", "fast"):
+        where.append("so.tempo = ?")
+        params.append(tempo)
     if q and q.strip():
         compact = re.sub(r"\s+", "", q.strip()).lower()
         nq = f"%{compact}%"
@@ -601,7 +661,8 @@ def search_songs(
     sql = SONG_SELECT + (" WHERE " + " AND ".join(where) if where else "")
     sql += " ORDER BY so.title COLLATE NOCASE, (sc.conti_date IS NULL), sc.conti_date DESC, so.id DESC"
     with get_conn() as conn:
-        return [_song_from_row(r) for r in conn.execute(sql, params).fetchall()]
+        sheet_of = dedupe.index(conn)["sheet_of"]
+        return [_song_from_row(r, sheet_of) for r in conn.execute(sql, params).fetchall()]
 
 
 @router.get("/songs/facets")
@@ -615,7 +676,13 @@ def song_facets():
         for r in conn.execute(f"SELECT chords_text FROM songs WHERE {ok}"):
             chord_set.update((r["chords_text"] or "").split())
         total = conn.execute(f"SELECT COUNT(*) FROM songs WHERE {ok}").fetchone()[0]
-    return {"keys": keys, "chords": sorted(chord_set), "total": total}
+        # 분류(설교 전/후, 느린/빠른)별 곡 수 — 같은 제목은 한 곡으로
+        cats = {}
+        for col, val in (("section", "before"), ("section", "after"), ("tempo", "slow"), ("tempo", "fast")):
+            cats[val] = conn.execute(
+                f"SELECT COUNT(DISTINCT lower(replace(title, ' ', ''))) FROM songs WHERE {col} = ? AND {ok}",
+                (val,)).fetchone()[0]
+    return {"keys": keys, "chords": sorted(chord_set), "total": total, "categories": cats}
 
 
 def _get_song_row(conn, song_id: int):
@@ -628,22 +695,34 @@ def _get_song_row(conn, song_id: int):
 @router.get("/songs/{song_id}", response_model=Song)
 def get_song(song_id: int):
     with get_conn() as conn:
-        return _song_from_row(_get_song_row(conn, song_id))
+        return _song_from_row(_get_song_row(conn, song_id), dedupe.index(conn)["sheet_of"])
 
 
 @router.patch("/songs/{song_id}", response_model=Song)
 def update_song(song_id: int, req: SongUpdateRequest):
+    """제목·키·빠르기는 같은 악보(다른 콘티에 들어간 같은 그림) 전부에 반영한다.
+    설교 전/후는 콘티마다 다르므로 이 곡에만."""
+    if req.section is not None and req.section not in SECTIONS:
+        raise HTTPException(400, "section 은 before / after / '' 중 하나")
+    if req.tempo is not None and req.tempo not in TEMPOS:
+        raise HTTPException(400, "tempo 는 slow / fast / '' 중 하나")
     with get_conn() as conn:
-        _get_song_row(conn, song_id)
-        if req.title is not None:
-            conn.execute("UPDATE songs SET title = ?, title_manual = 1 WHERE id = ?",
-                         (req.title.strip() or "제목 없음", song_id))
-        if req.key is not None:
+        old = _get_song_row(conn, song_id)
+        same = dedupe.same_sheet_song_ids(conn, song_id)
+        marks = ",".join("?" for _ in same)
+        if req.title is not None and req.title.strip() != old["title"]:
+            conn.execute(f"UPDATE songs SET title = ?, title_manual = 1 WHERE id IN ({marks})",
+                         (req.title.strip() or "제목 없음", *same))
+        if req.key is not None and normalize_key(req.key) != old["song_key"]:
             k = normalize_key(req.key)
-            conn.execute("UPDATE songs SET song_key = ?, key_source = ? WHERE id = ?",
-                         (k, "manual" if k else "", song_id))
+            conn.execute(f"UPDATE songs SET song_key = ?, key_source = ? WHERE id IN ({marks})",
+                         (k, "manual" if k else "", *same))
+        if req.tempo is not None and req.tempo != old["tempo"]:
+            conn.execute(f"UPDATE songs SET tempo = ? WHERE id IN ({marks})", (req.tempo, *same))
+        if req.section is not None:
+            conn.execute("UPDATE songs SET section = ? WHERE id = ?", (req.section, song_id))
         conn.commit()
-        return _song_from_row(_get_song_row(conn, song_id))
+        return _song_from_row(_get_song_row(conn, song_id), dedupe.index(conn)["sheet_of"])
 
 
 @router.delete("/songs/{song_id}")
@@ -684,7 +763,8 @@ def split_song(song_id: int, req: SplitRequest):
             raise HTTPException(400, "나눌 페이지가 곡 범위 밖입니다")
         conn.execute("UPDATE songs SET page_end = ? WHERE id = ?", (req.page - 1, song_id))
         _recompute_song(conn, song_id)
-        _insert_song(conn, s["score_id"], req.page, s["page_end"])
+        new_id = _insert_song(conn, s["score_id"], req.page, s["page_end"])
+        conn.execute("UPDATE songs SET section = ? WHERE id = ?", (s["section"], new_id))
         conn.commit()
         score_id = s["score_id"]
     return get_score_summary(score_id)

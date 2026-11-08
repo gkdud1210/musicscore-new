@@ -1902,3 +1902,65 @@ a.logo { text-decoration: none; color: inherit; }
 .save-all-bar #saveAllCount { flex: 1; min-width: 140px; font-weight: 600; font-size: 14px; }
 .save-all-bar .btn-primary { min-width: 120px; }
 form.dirty .lib-edit-title-input { border-color: #f59e0b; background: rgba(245,158,11,.08); }
+
+/* 분류: 설교 전/후, 느린/빠른 */
+.song-cats { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex-basis: 100%; }
+.song-cats-sep { width: 1px; height: 18px; background: rgba(255,255,255,.15); margin: 0 2px; }
+.choice-chip { display: inline-flex; align-items: center; padding: 5px 11px; border-radius: 999px; font-size: 13px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.18); color: var(--text-secondary, #aaa); user-select: none; }
+.choice-chip input { position: absolute; opacity: 0; pointer-events: none; }
+.choice-chip:has(input:checked) { color: #fff; border-color: transparent; font-weight: 600; }
+.choice-before:has(input:checked) { background: #7c6bff; }
+.choice-after:has(input:checked) { background: #ec4899; }
+.choice-slow:has(input:checked) { background: #06b6d4; }
+.choice-fast:has(input:checked) { background: #f59e0b; }
+.choice-chip:has(input:focus-visible) { outline: 2px solid #fff; }
+.from-here { font-size: 12px; }
+.matched-badge { font-size: 12px; color: #22c55e; }
+.song-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.song-tag { font-size: 11px; padding: 2px 7px; border-radius: 999px; color: #fff; font-weight: 600; }
+.tag-before { background: #7c6bff; } .tag-after { background: #ec4899; }
+.tag-slow { background: #06b6d4; } .tag-fast { background: #f59e0b; }
+.cat-chip.active.cat-before { background: #7c6bff; border-color: #7c6bff; }
+.cat-chip.active.cat-after { background: #ec4899; border-color: #ec4899; }
+.cat-chip.active.cat-slow { background: #06b6d4; border-color: #06b6d4; }
+.cat-chip.active.cat-fast { background: #f59e0b; border-color: #f59e0b; }
+.conti-section-head { margin: 18px 0 8px; font-size: 15px; padding-left: 10px; border-left: 4px solid #7c6bff; }
+.conti-section-head.sec-after { border-left-color: #ec4899; }
+.conti-song-chip.sec-before { box-shadow: inset 3px 0 0 #7c6bff; }
+.conti-song-chip.sec-after { box-shadow: inset 3px 0 0 #ec4899; }
+.tempo-picker .tempo-btn { padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,.18); background: transparent; color: inherit; cursor: pointer; font-size: 13px; }
+.tempo-picker .tempo-btn.on { background: #06b6d4; border-color: #06b6d4; color: #fff; font-weight: 600; }
+.tempo-picker .tempo-btn:disabled { opacity: .6; cursor: default; }
+
+/* 같은 악보 / 겹치는 콘티 */
+.sheet-dup-note { font-size: 12px; font-weight: 400; color: var(--text-secondary, #aaa); margin-left: 6px; }
+.sheet-used-in { font-size: 12px; color: #22c55e; margin: 4px 0 8px; }
+.overlap-banner { border: 1px solid rgba(34,197,94,.5); background: rgba(34,197,94,.08); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+.overlap-title { font-weight: 700; margin: 0 0 6px; }
+.overlap-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 0; font-size: 14px; }
+.overlap-row > span { flex: 1; min-width: 200px; }
+.overlap-sub { font-size: 12px; color: var(--text-secondary, #aaa); margin: 6px 0 0; }
+.btn-sm.danger { border-color: rgba(239,68,68,.6); color: #fca5a5; }
+.pending-badge.dup { background: rgba(34,197,94,.2); color: #4ade80; }
+
+/* 조 변환: 맨 위 ⚡ 바로 변환하기 카드 */
+.quick-card { display: flex; flex-direction: column; gap: 14px; text-align: left; }
+.quick-title { font-weight: 700; font-size: 18px; }
+.quick-drop { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 22px 14px; cursor: pointer;
+  border: 2px dashed var(--border); border-radius: 14px; text-align: center; transition: border-color .15s, background .15s; }
+.quick-drop:hover, .quick-drop.drag-over { border-color: var(--accent, #7c6bff); background: rgba(124,107,255,.08); }
+.quick-drop.has-file { border-style: solid; border-color: #22c55e; }
+.quick-drop-icon { font-size: 30px; }
+.quick-drop-text { font-weight: 600; word-break: break-all; }
+.quick-drop-sub { font-size: 12px; color: var(--text-secondary); }
+.quick-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; }
+.quick-row select { flex: 1; max-width: 200px; padding: 9px 10px; border-radius: 10px; background: var(--bg-card-hover); color: var(--text-primary); border: 1px solid var(--border); font-size: 15px; }
+.quick-go { width: 100%; justify-content: center; padding: 14px; font-size: 16px; }
+.quick-go:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 900px) {
+  /* 휴대폰: 설명을 줄여서 바로 변환 카드가 첫 화면에 보이게 */
+  .hero { padding-top: 84px; gap: 20px; }
+  .hero-subtitle, .hero-chips, .hero-tag { display: none; }
+  .hero-title { font-size: 26px; }
+}

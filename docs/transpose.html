@@ -18,7 +18,7 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="css/style.css?v=4" />
+  <link rel="stylesheet" href="css/style.css?v=9" />
   <!-- VexFlow for sheet music rendering -->
   <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.2/build/cjs/vexflow.js"></script>
 </head>
@@ -65,14 +65,39 @@
         <span class="chip">🎵 박자 유지</span>
         <span class="chip">📥 PNG 다운로드</span>
       </div>
-      <button class="btn-primary hero-cta" onclick="document.getElementById('upload-section').scrollIntoView({behavior:'smooth'})">
-        지금 시작하기 →
+      <button class="btn-outline hero-cta" onclick="document.getElementById('upload-section').scrollIntoView({behavior:'smooth'})">
+        단계별로 하기 ↓
       </button>
     </div>
     <div class="hero-visual">
-      <div class="hero-card">
-        <div class="mini-staff" id="heroStaff"></div>
-        <div class="hero-card-label">C Major → G Major</div>
+      <!-- 바로 변환: 스크롤 없이 여기서 파일 고르고 바로 변환 -->
+      <div class="hero-card quick-card" id="quickCard">
+        <div class="quick-title">⚡ 바로 변환하기</div>
+        <label class="quick-drop" id="quickDrop" for="quickFile">
+          <input type="file" id="quickFile" accept=".xml,.musicxml,.mxl,.mid,.midi,.krn,.abc,image/*,.pdf" hidden />
+          <span class="quick-drop-icon">🎼</span>
+          <span class="quick-drop-text" id="quickFileName">악보 파일을 끌어다 놓거나 눌러서 고르세요</span>
+          <span class="quick-drop-sub">사진 · PDF · MusicXML · MIDI</span>
+        </label>
+        <label class="quick-row">
+          <span>바꿀 키</span>
+          <select id="quickTarget">
+            <option value="">분석 후에 고를게요</option>
+            <optgroup label="장조">
+              <option value="C|major">C</option><option value="Db|major">Db</option><option value="D|major">D</option>
+              <option value="Eb|major">Eb</option><option value="E|major">E</option><option value="F|major">F</option>
+              <option value="F#|major">F#</option><option value="G|major">G</option><option value="Ab|major">Ab</option>
+              <option value="A|major">A</option><option value="Bb|major">Bb</option><option value="B|major">B</option>
+            </optgroup>
+            <optgroup label="단조">
+              <option value="A|minor">Am</option><option value="Bb|minor">Bbm</option><option value="B|minor">Bm</option>
+              <option value="C|minor">Cm</option><option value="C#|minor">C#m</option><option value="D|minor">Dm</option>
+              <option value="Eb|minor">Ebm</option><option value="E|minor">Em</option><option value="F|minor">Fm</option>
+              <option value="F#|minor">F#m</option><option value="G|minor">Gm</option><option value="G#|minor">G#m</option>
+            </optgroup>
+          </select>
+        </label>
+        <button type="button" class="btn-primary quick-go" id="quickGo" disabled>🔄 업로드하고 변환하기</button>
       </div>
     </div>
   </section>
@@ -566,6 +591,6 @@
 
   <script src="js/vexflow-handler.js"></script>
   <script src="js/api.js?v=4"></script>
-  <script src="js/main.js"></script>
+  <script src="js/main.js?v=9"></script>
 </body>
 </html>
