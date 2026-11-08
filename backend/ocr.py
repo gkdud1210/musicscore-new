@@ -21,7 +21,11 @@ from difflib import SequenceMatcher
 
 import fitz
 from PIL import Image
-import pytesseract
+
+try:   # 제미나이로 읽는 서버에는 Tesseract 가 없어도 된다
+    import pytesseract
+except ImportError:
+    pytesseract = None
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +245,8 @@ def zoom_for_width(page: "fitz.Page", target_px: int) -> float:
 def _lines_from_ocr(doc: "fitz.Document", page_index: int) -> list:
     img = render_page_image(doc, page_index, zoom=zoom_for_width(doc[page_index], OCR_TARGET_WIDTH))
     img = img.convert("L")
+    if pytesseract is None:
+        raise RuntimeError("이 서버에는 Tesseract가 없어요. backend/.env 에 GEMINI_API_KEY 를 넣어주세요")
     data = pytesseract.image_to_data(img, lang=TESS_LANG, output_type=pytesseract.Output.DICT)
     ih = img.height or 1
     lines = {}

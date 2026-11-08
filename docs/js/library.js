@@ -133,7 +133,7 @@ async function refreshAll() {
     LibState.listPoll = setTimeout(() => { if (!LibState.modal) refreshAll(); }, 5000);
   }
   if (AuthState.canEdit && LibState.aiAvailable === undefined) {
-    apiJson('/api/ai-status').then(r => { LibState.aiAvailable = !!r.available; }).catch(() => {});
+    apiJson('/api/ai-status').then(r => { LibState.aiAvailable = !!r.available; LibState.engine = r.engine; }).catch(() => {});
   }
   document.getElementById('libraryOffline').classList.add('hidden');
   switchTab(LibState.tab);
@@ -792,7 +792,7 @@ function renderContiModal(conti, songs) {
     <div class="now-row"><button type="button" class="btn-now" data-live="send-conti">📡 NOW · 지금 이 콘티 띄우기</button></div>
     <p class="lib-modal-sub">
       자동으로 나눈 곡이 틀렸다면 여기서 고쳐주세요. 표지·순서지 페이지는 "곡에서 빼기"를 누르면 검색에 안 나와요.
-      <button class="btn-link" data-action="reprocess" data-id="${conti.id}">처음부터 다시 분석</button>
+      <button class="btn-link" data-action="reprocess" data-id="${conti.id}">처음부터 다시 분석${LibState.engine === 'gemini' ? ' (✨ 제미나이)' : ''}</button>
     </p>
     ${conti.status === 'error' ? `<p class="conti-hint error-hint">⚠️ ${escapeHtml(conti.status_detail)}</p>` : ''}
     <div class="ai-row">

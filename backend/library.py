@@ -413,7 +413,7 @@ def upload_score(file: UploadFile = File(...)):
 
     # 분석(스캔본은 몇 분)은 백그라운드에서 — Cloudflare가 100초 넘는 요청을 끊기 때문에
     # 바로 응답하고, 화면은 status 가 processing 이 아닐 때까지 확인한다
-    enqueue_analysis(score_id, "ocr", first_upload=True)
+    enqueue_analysis(score_id, default_engine(), first_upload=True)
     logger.info(f"📚 콘티 업로드: [{score_id}] {stem} ({page_count}p) → 분석 대기")
     return get_score_summary(score_id)
 
@@ -431,13 +431,19 @@ def _set_status(score_id: int, status: str, detail: str = ""):
         conn.commit()
 
 
+def default_engine() -> str:
+    """GEMINI_API_KEY 가 있으면 제미나이로, 없으면 Tesseract OCR로 읽는다."""
+    from gemini_ocr import gemini_available
+    return "gemini" if gemini_available() else "ocr"
+
+
 def enqueue_analysis(score_id: int, engine: str = "ocr", first_upload: bool = False):
     _set_status(score_id, "processing", "대기 중")
     _analysis_pool.submit(_run_analysis, score_id, engine, first_upload)
 
 
 def _run_analysis(score_id: int, engine: str, first_upload: bool):
-    label = "AI 인식" if engine == "ai" else "인식"
+    label = {"ai": "AI 인식", "gemini": "제미나이 인식"}.get(engine, "인식")
     try:
         doc = fitz.open(_pdf_path(score_id))
     except Exception as e:
@@ -453,8 +459,9 @@ def _run_analysis(score_id: int, engine: str, first_upload: bool):
         with get_conn() as conn:
             dedupe.save_hashes(conn, score_id, hashes)
             conn.commit()
-            reuse = dedupe.reference_pages(conn, score_id, hashes) if first_upload and engine == "ocr" else {}
-            forced = dedupe.reference_songs(conn, score_id, hashes) if engine == "ocr" else []
+            # 제미나이/OCR은 전에 읽은 같은 악보를 다시 읽지 않는다 (Claude 다시 인식은 전부 새로)
+            reuse = dedupe.reference_pages(conn, score_id, hashes) if first_upload and engine != "ai" else {}
+            forced = dedupe.reference_songs(conn, score_id, hashes) if engine != "ai" else []
             reused_pages = {pn: _page_dicts(conn, rs, rp, rp)[0] for pn, (rs, rp) in reuse.items()}
         if reused_pages:
             logger.info(f"[{score_id}] 같은 악보 {len(reused_pages)}/{n}쪽은 전에 읽은 결과를 씀")
@@ -462,6 +469,12 @@ def _run_analysis(score_id: int, engine: str, first_upload: bool):
             from ai_ocr import analyze_pdf_ai
             _set_status(score_id, "processing", f"{label} 준비 중")
             pages = analyze_pdf_ai(doc, progress)
+        elif engine == "gemini":
+            from gemini_ocr import analyze_pages_gemini
+            todo = [i for i in range(n) if i + 1 not in reused_pages]
+            _set_status(score_id, "processing", f"{label} 준비 중")
+            read = analyze_pages_gemini(doc, todo, progress) if todo else {}
+            pages = [read[i] if i in read else {**reused_pages[i + 1], "page_number": i + 1} for i in range(n)]
         else:
             pages = []
             for i in range(n):
@@ -506,7 +519,7 @@ def resume_pending_analysis():
         ids = [r["id"] for r in conn.execute("SELECT id FROM scores WHERE status = 'processing'")]
     for sid in ids:
         logger.info(f"[{sid}] 끊긴 분석 다시 시작")
-        enqueue_analysis(sid, "ocr", first_upload=True)
+        enqueue_analysis(sid, default_engine(), first_upload=True)
 
 
 @router.get("/scores", response_model=List[ScoreSummary])
@@ -572,9 +585,12 @@ def delete_score(score_id: int):
 
 
 @router.post("/scores/{score_id}/reprocess", response_model=ScoreSummary)
-def reprocess_score(score_id: int, engine: str = Query("ocr", pattern="^(ocr|ai)$")):
+def reprocess_score(score_id: int, engine: str = Query("auto", pattern="^(auto|ocr|ai|gemini)$")):
     """콘티를 처음부터 다시 분석 (곡 분리/제목/키를 수동으로 고친 내용은 사라진다).
-    engine=ai 면 Claude로 읽는다 (ANTHROPIC_API_KEY 필요). 백그라운드에서 돌고 바로 응답한다."""
+    auto = 제미나이 키가 있으면 제미나이, 없으면 OCR. ai = Claude (ANTHROPIC_API_KEY 필요).
+    백그라운드에서 돌고 바로 응답한다."""
+    if engine == "auto":
+        engine = default_engine()
     row = get_score_row(score_id)
     if row["status"] == "processing":
         raise HTTPException(409, "이미 분석 중이에요. 끝날 때까지 기다려주세요")
@@ -584,14 +600,23 @@ def reprocess_score(score_id: int, engine: str = Query("ocr", pattern="^(ocr|ai)
         from ai_ocr import ai_available
         if not ai_available():
             raise HTTPException(400, "AI 인식을 쓰려면 서버에 Claude API 키(ANTHROPIC_API_KEY)를 넣어야 해요")
+    if engine == "gemini":
+        from gemini_ocr import gemini_available
+        if not gemini_available():
+            raise HTTPException(400, "제미나이로 읽으려면 서버에 GEMINI_API_KEY 를 넣어야 해요")
     enqueue_analysis(score_id, engine)
     return get_score_summary(score_id)
 
 
 @router.get("/ai-status")
 def ai_status():
-    from ai_ocr import ai_available
-    return {"available": ai_available()}
+    from gemini_ocr import gemini_available
+    try:
+        from ai_ocr import ai_available
+        claude = ai_available()
+    except ImportError:      # anthropic 패키지가 없는 서버
+        claude = False
+    return {"available": claude, "gemini": gemini_available(), "engine": default_engine()}
 
 
 # ═══════════════════════════════════════════════════════════════
