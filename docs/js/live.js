@@ -608,11 +608,25 @@ async function sendLiveMessage(text) {
   }
 }
 
+const QUICK_WORDS_FALLBACK = {
+  who: ['베이스', '드럼', '메인신디', '2단 신디', '마이크', '1번', '2번', '3번', '4번', '5번', '사모님', '목사님'],
+  what: ['조금만', '올려주세요', '내려주세요', '감사합니다'],
+};
+
 async function loadQuickMessages() {
-  try { LiveState.quick = (await apiJson('/api/quick-messages')).messages || []; }
-  catch { LiveState.quick = LiveState.quick || []; }
+  try {
+    const r = await apiJson('/api/quick-messages');
+    LiveState.quick = r.messages || [];
+    LiveState.words = r.words || QUICK_WORDS_FALLBACK;
+  } catch {
+    LiveState.quick = LiveState.quick || [];
+    LiveState.words = LiveState.words || QUICK_WORDS_FALLBACK;
+  }
   return LiveState.quick;
 }
+
+const wordChips = list => list.map(w =>
+  `<button type="button" class="live-word-chip" data-live="add-word" data-text="${escapeHtml(w)}">${escapeHtml(w)}</button>`).join('');
 
 async function openLiveMsgPanel(edit = false) {
   const box = document.getElementById('liveMsgPanel');
@@ -620,7 +634,8 @@ async function openLiveMsgPanel(edit = false) {
   if (!edit && !box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
   document.getElementById('liveAdd')?.classList.add('hidden');
   box.classList.remove('hidden');
-  const list = LiveState.quick || await loadQuickMessages();
+  const list = LiveState.quick && LiveState.words ? LiveState.quick : await loadQuickMessages();
+  const words = LiveState.words || QUICK_WORDS_FALLBACK;
   if (edit) {
     box.innerHTML = `
       <p class="live-add-note">✏️ 퀵 메세지 편집 · 팀 관리자 모두 같이 써요</p>
@@ -628,34 +643,65 @@ async function openLiveMsgPanel(edit = false) {
         ${list.map(m => `<div class="live-quick-row"><input type="text" class="live-add-search" maxlength="40" value="${escapeHtml(m)}" />
           <button type="button" class="live-top-btn" data-live="quick-del" aria-label="빼기">✕</button></div>`).join('')}
       </div>
+      <div class="live-msg-actions"><button type="button" class="live-top-btn" data-live="quick-add">＋ 퀵 메세지 추가</button></div>
+      <p class="live-add-note">🧩 단어 · 쉼표(,)로 나눠서 적어요</p>
+      <label class="live-word-edit">누구·무엇
+        <textarea class="live-add-search" id="liveWordsWho" rows="2">${escapeHtml(words.who.join(', '))}</textarea></label>
+      <label class="live-word-edit">말
+        <textarea class="live-add-search" id="liveWordsWhat" rows="2">${escapeHtml(words.what.join(', '))}</textarea></label>
       <div class="live-msg-actions">
-        <button type="button" class="live-top-btn" data-live="quick-add">＋ 추가</button>
         <button type="button" class="live-top-btn" data-live="msg-panel">취소</button>
         <button type="button" class="live-top-btn notify" data-live="quick-save">저장</button>
       </div>`;
     return;
   }
   box.innerHTML = `
-    <p class="live-add-note">💬 누르면 바로 라이브 보는 모두의 악보 위에 떠요</p>
+    <p class="live-add-note">⚡ 누르면 바로 라이브 보는 모두의 악보 위에 떠요</p>
     <div class="live-quick">
       ${list.map(m => `<button type="button" class="live-quick-chip" data-live="send-msg" data-text="${escapeHtml(m)}">${escapeHtml(m)}</button>`).join('')}
     </div>
+    <p class="live-add-note">🧩 단어를 눌러 문장을 만들고 <b>보내기</b></p>
+    <div class="live-words">${wordChips(words.who)}</div>
+    <div class="live-words what">${wordChips(words.what)}</div>
     <form class="live-msg-form" id="liveMsgForm">
-      <input type="text" class="live-add-search" id="liveMsgInput" maxlength="80" placeholder="직접 쓰기 (예: 2절 건너뛰어요)" />
+      <input type="text" class="live-add-search" id="liveMsgInput" maxlength="80" placeholder="단어를 누르거나 직접 쓰기 (예: 2절 건너뛰어요)" />
+      <button type="button" class="live-top-btn" data-live="word-back" title="마지막 단어 지우기" aria-label="마지막 단어 지우기">⌫</button>
       <button type="submit" class="live-top-btn notify">보내기</button>
     </form>
-    <button type="button" class="live-quick-editbtn" data-live="quick-edit">✏️ 퀵 메세지 편집</button>`;
+    <button type="button" class="live-quick-editbtn" data-live="quick-edit">✏️ 퀵 메세지·단어 편집</button>`;
   document.getElementById('liveMsgForm').addEventListener('submit', e => {
     e.preventDefault();
     sendLiveMessage(document.getElementById('liveMsgInput').value);
   });
 }
 
+function addMsgWord(word) {
+  const input = document.getElementById('liveMsgInput');
+  if (!input) return;
+  const cur = input.value.replace(/\s+$/, '');
+  input.value = (cur ? cur + ' ' : '') + word;
+}
+
+function removeMsgWord() {
+  const input = document.getElementById('liveMsgInput');
+  if (!input) return;
+  const v = input.value.replace(/\s+$/, '');
+  const words = LiveState.words || QUICK_WORDS_FALLBACK;
+  // 누른 단어(띄어쓰기 들어간 "2단 신디"도)를 통째로 지우고, 아니면 마지막 낱말을 지운다
+  const hit = [...words.who, ...words.what].sort((a, b) => b.length - a.length).find(w => v.endsWith(w));
+  input.value = hit ? v.slice(0, v.length - hit.length).replace(/\s+$/, '') : v.replace(/\s*\S+$/, '');
+}
+
+const splitWords = v => String(v || '').split(/[,，\n]/).map(x => x.trim()).filter(Boolean);
+
 async function saveQuickMessages() {
   const messages = [...document.querySelectorAll('#liveQuickEdit input')].map(i => i.value.trim()).filter(Boolean);
+  const words = { who: splitWords(document.getElementById('liveWordsWho')?.value), what: splitWords(document.getElementById('liveWordsWhat')?.value) };
   try {
-    LiveState.quick = (await apiJson('/api/quick-messages', jsonBody('PUT', { messages }))).messages;
-    showToast('퀵 메세지를 저장했어요.', 'success');
+    const r = await apiJson('/api/quick-messages', jsonBody('PUT', { messages, words }));
+    LiveState.quick = r.messages;
+    LiveState.words = r.words;
+    showToast('퀵 메세지·단어를 저장했어요.', 'success');
     document.getElementById('liveMsgPanel')?.classList.add('hidden');
     openLiveMsgPanel(false);
   } catch (e) {
@@ -679,6 +725,8 @@ document.addEventListener('click', e => {
     case 'msg': openLiveMsgPanel(); break;
     case 'msg-panel': document.getElementById('liveMsgPanel')?.classList.add('hidden'); openLiveMsgPanel(); break;
     case 'send-msg': sendLiveMessage(el.dataset.text); break;
+    case 'add-word': addMsgWord(el.dataset.text); break;
+    case 'word-back': removeMsgWord(); break;
     case 'quick-edit': openLiveMsgPanel(true); break;
     case 'quick-del': el.closest('.live-quick-row')?.remove(); break;
     case 'quick-add': {

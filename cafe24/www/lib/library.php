@@ -973,23 +973,48 @@ function api_live_message(): array
 const QUICK_MESSAGES_DEFAULT = ['드럼 좀 천천히 부탁해요 🥁', '조금 더 고조 업업 🔥', '템포 조금 빠르게 ⏩', '한 번 더 반복 🔁',
                                 '후렴으로 가요', '조용히 마무리해요 🙏'];
 
+// 단어 골라 문장 만들기 — 누구·무엇 / 말
+const QUICK_WORDS_DEFAULT = [
+    'who' => ['베이스', '드럼', '메인신디', '2단 신디', '마이크', '1번', '2번', '3번', '4번', '5번', '사모님', '목사님'],
+    'what' => ['조금만', '올려주세요', '내려주세요', '감사합니다'],
+];
+
+function quick_words(): array
+{
+    $v = state_get('quick_words');
+    $w = $v !== null ? json_decode($v, true) : null;
+    return is_array($w) && isset($w['who'], $w['what']) ? $w : QUICK_WORDS_DEFAULT;
+}
+
+function clean_word_list($items, int $max, int $len): array
+{
+    $list = [];
+    foreach ((array)$items as $m) {
+        $m = trim(preg_replace('/\s+/u', ' ', (string)$m));
+        if ($m !== '' && !in_array($m, $list, true)) $list[] = mb_substr($m, 0, $len);
+        if (count($list) >= $max) break;
+    }
+    return $list;
+}
+
 function api_get_quick_messages(): array
 {
     $v = state_get('quick_messages');
     $list = $v !== null ? json_decode($v, true) : null;
-    return ['messages' => is_array($list) ? $list : QUICK_MESSAGES_DEFAULT];
+    return ['messages' => is_array($list) ? $list : QUICK_MESSAGES_DEFAULT, 'words' => quick_words()];
 }
 
 function api_put_quick_messages(): array
 {
-    $list = [];
-    foreach ((array)(body_json()['messages'] ?? []) as $m) {
-        $m = trim(preg_replace('/\s+/u', ' ', (string)$m));
-        if ($m !== '' && !in_array($m, $list, true)) $list[] = mb_substr($m, 0, 40);
-        if (count($list) >= 16) break;
+    $b = body_json();
+    if (array_key_exists('messages', $b)) {
+        state_set('quick_messages', json_encode(clean_word_list($b['messages'], 16, 40), JSON_UNESCAPED_UNICODE));
     }
-    state_set('quick_messages', json_encode($list, JSON_UNESCAPED_UNICODE));
-    return ['messages' => $list];
+    if (isset($b['words']) && is_array($b['words'])) {
+        $w = ['who' => clean_word_list($b['words']['who'] ?? [], 40, 20), 'what' => clean_word_list($b['words']['what'] ?? [], 40, 20)];
+        state_set('quick_words', json_encode($w, JSON_UNESCAPED_UNICODE));
+    }
+    return api_get_quick_messages();
 }
 
 function api_stop_live(): array

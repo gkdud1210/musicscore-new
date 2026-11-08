@@ -2324,3 +2324,18 @@ html[data-theme="light"] .live-nav { background: rgba(0,0,0,.12); color: #222; }
 html[data-theme="light"] .live-nav:hover { background: rgba(0,0,0,.25); }
 html[data-theme="light"] .live-msg { background: #fffaf0; color: #000; box-shadow: 0 18px 50px rgba(0,0,0,.25); }
 html[data-theme="light"] .live-msg-hint { color: #8a6d1f; }
+
+/* 💬 단어 골라 문장 만들기 */
+.live-words { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+.live-word-chip {
+  background: #1d2433; color: #e8eeff; border: 1px solid #34405a; border-radius: 8px;
+  padding: 7px 11px; font-size: 14px; cursor: pointer; font-family: var(--font-main);
+}
+.live-words.what .live-word-chip { background: #2a2312; color: #ffe2a3; border-color: #5a4720; }
+.live-word-chip:active { transform: scale(.95); background: var(--accent); color: #fff; }
+.live-word-edit { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #bbb; margin-bottom: 6px; }
+.live-word-edit textarea { resize: vertical; margin: 0; font-family: var(--font-main); }
+html[data-theme="light"] .live-word-chip { background: #eef2ff; color: #1e2a5a; border-color: #c7d0f0; }
+html[data-theme="light"] .live-words.what .live-word-chip { background: #fff4dc; color: #6b4a00; border-color: #f0d69a; }
+html[data-theme="light"] .live-word-edit { color: #555; }
+.live-add.live-msg-panel { max-height: 62vh; }
