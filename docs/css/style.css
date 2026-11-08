@@ -2425,3 +2425,22 @@ html[data-theme="light"] .live-to-sum { color: #555; }
 .live-to-reset { background: none; border: 0; color: #93c5fd; font-size: 12px; cursor: pointer; text-decoration: underline; padding: 2px 4px; }
 html[data-theme="light"] .live-to-reset { color: #1d4ed8; }
 @media (max-width: 640px) { .people-row { flex-wrap: wrap; } .people-row .people-name { flex: 1 1 100%; } }
+
+/* ↕ 라이브 세로 스크롤 보기 */
+.live-track.vertical {
+  position: relative; flex-direction: column; overflow-x: hidden; overflow-y: auto;
+  scroll-snap-type: none; background: #fff; -webkit-overflow-scrolling: touch; scrollbar-width: auto;
+}
+.live-track.vertical::-webkit-scrollbar { display: block; width: 8px; }
+.live-track.vertical .live-slide {
+  flex: none; width: 100%; height: auto; overflow: visible; scroll-snap-align: none;
+  border-bottom: 6px solid #e6e7ec;
+}
+.live-track.vertical .live-slide img { width: 100%; max-width: 1000px; max-height: none; height: auto; margin: 0 auto; }
+.live-msg { transition: opacity .4s, transform .4s; }
+.live-msg.out { opacity: 0; transform: translate(-50%, -10px); }
+.live-top-btn { white-space: nowrap; }
+@media (max-width: 600px) {
+  .live-top { column-gap: 6px; }
+  .live-top-btn { padding: 8px 8px; font-size: 12px; }
+}

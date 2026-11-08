@@ -384,6 +384,7 @@ function renderLiveSet() {
       <div class="live-now" id="liveNow"></div>
       ${server ? '<button type="button" class="live-top-btn notify" data-live="notify" title="지금 보고 있는 콘티·곡으로 모두의 화면을 넘겨요">📣 알림주기</button>' : ''}
       ${server ? '<button type="button" class="live-top-btn msg" data-live="msg" title="라이브 보는 모두의 악보 위에 메세지 띄우기">💬 메세지</button>' : ''}
+      <button type="button" class="live-top-btn" data-live="scroll-mode" title="${liveVertical() ? '옆으로 넘기기로 바꾸기' : '밑으로 스크롤로 바꾸기'}">${liveVertical() ? '↕ 스크롤' : '↔ 넘기기'}</button>
       <button type="button" class="live-top-btn" data-live="fullscreen" title="전체 화면">⛶</button>
       ${!server ? '<button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>'
         : '<button type="button" class="live-top-btn" data-live="leave" title="내 화면만 닫아요. 라이브는 다른 사람들에게 계속돼요">🚪 나가기</button>'}
@@ -395,7 +396,7 @@ function renderLiveSet() {
       ${set.songs.map((s, i) => `<button type="button" class="live-song-chip" data-live="jump" data-song="${i}">
         ${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</button>`).join('')}
     </div>
-    <div class="live-track" id="liveTrack">
+    <div class="live-track${liveVertical() ? ' vertical' : ''}" id="liveTrack">
       ${slides.map((sl, i) => `<div class="live-slide" data-index="${i}">
         <img src="${API_BASE}${sl.url}" alt="${escapeHtml(sl.song.title)}" ${i < 3 ? '' : 'loading="lazy"'} draggable="false" />
       </div>`).join('')}
@@ -406,7 +407,10 @@ function renderLiveSet() {
 
   const track = document.getElementById('liveTrack');
   const start = Math.min(V.pos[set.key] || 0, Math.max(0, slides.length - 1));
-  track.scrollLeft = start * track.clientWidth;
+  setTrackPos(start);
+  if (liveVertical() && start) {   // 그림이 늦게 뜨면 위치가 밀리니 다 뜬 뒤 한 번 더
+    track.querySelectorAll('img').forEach(im => im.addEventListener('load', () => { if (V.pos[set.key] === start) setTrackPos(start); }, { once: true }));
+  }
   let raf = 0;
   track.addEventListener('scroll', () => {
     cancelAnimationFrame(raf);
@@ -432,9 +436,36 @@ function switchLiveSet(i, at = 'keep') {
   renderLiveSet();
 }
 
+/* ↔ 옆으로 넘기기 / ↕ 밑으로 스크롤 — 기기마다 기억 */
+const LIVE_SCROLL_KEY = 'jandi.live.scroll';
+const liveVertical = () => lsGet(LIVE_SCROLL_KEY) === 'v';
+function toggleLiveScrollMode() {
+  const i = liveIndex();
+  lsSet(LIVE_SCROLL_KEY, liveVertical() ? 'h' : 'v');
+  const V = LiveState.viewing;
+  if (V?.sets[V.cur]) V.pos[V.sets[V.cur].key] = i;
+  renderLiveSet();
+  showToast(liveVertical() ? '↕ 밑으로 쭉 스크롤해서 봐요' : '↔ 옆으로 넘겨서 봐요', 'info', 1800);
+}
+
 function liveIndex() {
   const track = document.getElementById('liveTrack');
-  return track ? Math.round(track.scrollLeft / Math.max(1, track.clientWidth)) : 0;
+  if (!track) return 0;
+  if (!track.classList.contains('vertical')) return Math.round(track.scrollLeft / Math.max(1, track.clientWidth));
+  // 세로: 화면 위쪽 1/3 지점에 걸친 쪽
+  const y = track.scrollTop + track.clientHeight / 3;
+  let idx = 0;
+  [...track.children].forEach((el, i) => { if (el.offsetTop <= y) idx = i; });
+  return idx;
+}
+
+/** i 번째 쪽으로 (세로면 그 쪽 맨 위로) */
+function setTrackPos(i, smooth = false) {
+  const track = document.getElementById('liveTrack');
+  if (!track) return;
+  const behavior = smooth ? 'smooth' : 'auto';
+  if (track.classList.contains('vertical')) track.scrollTo({ top: track.children[i]?.offsetTop || 0, behavior });
+  else track.scrollTo({ left: i * track.clientWidth, behavior });
 }
 
 /** 다음/이전: 콘티 끝에서 넘기면 다음 콘티로 이어진다 */
@@ -458,7 +489,7 @@ function goLiveSlide(i) {
   const track = document.getElementById('liveTrack');
   if (!track || !LiveState.slides) return;
   const n = Math.max(0, Math.min(LiveState.slides.length - 1, i));
-  track.scrollTo({ left: n * track.clientWidth, behavior: 'smooth' });
+  setTrackPos(n, true);
 }
 
 function updateLiveNow() {
@@ -622,8 +653,10 @@ function showLiveMessage(text, from = '') {
   el.type = 'button';
   el.id = 'liveMsg';
   el.className = 'live-msg';
-  el.innerHTML = `${from ? `<span class="live-msg-from">💬 ${escapeHtml(from)}</span>` : ''}<span class="live-msg-text">${escapeHtml(text)}</span><span class="live-msg-hint">터치하면 사라져요</span>`;
+  el.innerHTML = `${from ? `<span class="live-msg-from">💬 ${escapeHtml(from)}</span>` : ''}<span class="live-msg-text">${escapeHtml(text)}</span><span class="live-msg-hint">3초 뒤 사라져요 · 터치하면 바로</span>`;
   el.addEventListener('click', () => el.remove());
+  // 터치 안 해도 3초 뒤 저절로 사라진다
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, 3000);
   // 전체 화면이면 그 안에 붙여야 보인다
   (document.fullscreenElement || document.body).appendChild(el);
   try { navigator.vibrate?.([120, 60, 120]); } catch { /* 진동 없음 */ }
@@ -809,6 +842,7 @@ document.addEventListener('click', e => {
       break;
     }
     case 'open': openLiveViewer(); break;
+    case 'scroll-mode': toggleLiveScrollMode(); break;
     case 'invite': inviteLive(); break;
     case 'leave': leaveLive(); break;
     case 'msg': openLiveMsgPanel(); break;
@@ -881,7 +915,7 @@ window.addEventListener('resize', () => {
   if (LiveState.viewerOpen) {
     const t = document.getElementById('liveTrack');
     const V = LiveState.viewing;
-    if (t && V && V.sets[V.cur]) t.scrollLeft = (V.pos[V.sets[V.cur].key] || 0) * t.clientWidth;
+    if (t && V && V.sets[V.cur] && !t.classList.contains('vertical')) setTrackPos(V.pos[V.sets[V.cur].key] || 0);
   }
 });
 
