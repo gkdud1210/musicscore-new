@@ -3,7 +3,7 @@
  * - 누가 📡 라이브를 시작하면 서버에 올라가고, 접속한 사람들은 몇 초마다 확인하다 깜빡이는 알림을 받는다.
  * - 라이브가 켜져 있는 동안 관리자는 누구나 ＋ 콘티로 콘티를 더할 수 있고, 모두의 위 메뉴에 같이 생긴다.
  * - 📣 알림주기: 지금 보고 있는 콘티(곡)로 모두의 화면이 넘어간다.
- * - 라이브 화면에는 끝내기가 없고 모두 🚪 나가기(내 화면만). 끝내기는 예배 라이브 셋팅에서 시작한 사람만.
+ * - 🚪 나가기는 내 화면만. 라이브를 켠 사람은 나가기에서 "나만 나가기 / 라이브 끝내기"를 고른다.
  * - 📨 다시 초대: 나갔던 사람까지 다시 알림, OKAY 하면 들어온다.
  * 사용자 데이터는 escapeHtml을 거쳐서만 innerHTML에 넣는다.
  */
@@ -133,8 +133,25 @@ async function sendLive(title, songIds, contiId = null) {
   }
 }
 
-async function stopLive() {
-  if (!confirm('라이브를 끝낼까요? 모든 사람의 라이브 화면이 닫혀요.')) return;
+/** 라이브를 켠 사람이 나가기를 누르면: 나만 나가기 / 모두 끝내기 고르기 (잘못 눌러도 바로 끝나지 않게) */
+function openLeaveChoice() {
+  document.getElementById('liveLeaveSheet')?.remove();
+  const el = document.createElement('div');
+  el.id = 'liveLeaveSheet';
+  el.className = 'live-leave-sheet';
+  el.innerHTML = `<div class="live-leave-box" role="dialog" aria-modal="true" aria-label="라이브 나가기">
+    <p class="live-leave-title">내가 시작한 라이브예요</p>
+    <button type="button" class="live-leave-btn" data-live="leave-only">🚪 나만 나가기 <small>라이브는 다른 사람들에게 계속돼요</small></button>
+    <button type="button" class="live-leave-btn end" data-live="stop-now">■ 라이브 끝내기 <small>모든 사람의 라이브 화면이 닫혀요</small></button>
+    <button type="button" class="live-leave-cancel" data-live="leave-cancel">취소</button>
+  </div>`;
+  el.addEventListener('click', e => { if (e.target === el) el.remove(); });
+  (document.fullscreenElement || document.getElementById('liveViewer') || document.body).appendChild(el);
+}
+
+async function stopLive(ask = true) {
+  document.getElementById('liveLeaveSheet')?.remove();
+  if (ask && !confirm('라이브를 끝낼까요? 모든 사람의 라이브 화면이 닫혀요.')) return;
   try {
     await apiJson('/api/live', { method: 'DELETE' });
     LiveState.live = null;
@@ -253,7 +270,8 @@ function renderLiveIndicator() {
     document.body.appendChild(el);
   }
   el.innerHTML = `<button type="button" class="live-ind-open" data-live="open"><span class="live-dot"></span> LIVE · ${escapeHtml(live.title)}</button>
-    <button type="button" class="live-ind-invite" data-live="invite" title="모두에게 다시 초대 알림을 보내고 들어가요">📨 다시 초대</button>`;
+    <button type="button" class="live-ind-invite" data-live="invite" title="모두에게 다시 초대 알림을 보내고 들어가요">📨 다시 초대</button>
+    ${live.mine ? '<button type="button" class="live-ind-end" data-live="stop" title="라이브 끝내기 (모두)">■ 끝내기</button>' : ''}`;
   el.classList.toggle('hidden', LiveState.viewerOpen);
 }
 
@@ -844,7 +862,12 @@ document.addEventListener('click', e => {
     case 'open': openLiveViewer(); break;
     case 'scroll-mode': toggleLiveScrollMode(); break;
     case 'invite': inviteLive(); break;
-    case 'leave': leaveLive(); break;
+    case 'leave':
+      if (LiveState.live?.mine && LiveState.viewerOpen && !LiveState.viewing?.local) openLeaveChoice();
+      else leaveLive();
+      break;
+    case 'leave-only': document.getElementById('liveLeaveSheet')?.remove(); leaveLive(); break;
+    case 'leave-cancel': document.getElementById('liveLeaveSheet')?.remove(); break;
     case 'msg': openLiveMsgPanel(); break;
     case 'msg-panel': document.getElementById('liveMsgPanel')?.classList.add('hidden'); openLiveMsgPanel(); break;
     case 'send-msg': sendLiveMessage(el.dataset.text); break;
@@ -871,6 +894,7 @@ document.addEventListener('click', e => {
       break;
     case 'close': closeLiveViewer(); break;
     case 'stop': stopLive(); break;
+    case 'stop-now': stopLive(false); break;
     case 'prev': stepLive(-1); break;
     case 'next': stepLive(1); break;
     case 'set': switchLiveSet(Number(el.dataset.set)); break;
