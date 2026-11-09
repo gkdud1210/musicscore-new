@@ -2497,3 +2497,6 @@ html[data-theme="light"] .pages-box { background: rgba(40,42,60,.6); }
 .pages-box-x { background: none; border: 0; color: var(--text-primary); font-size: 22px; cursor: pointer; padding: 2px 8px; }
 .pages-box-pages { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)) !important; }
 @media (max-width: 640px) { .pages-box-pages { grid-template-columns: minmax(0, 1fr) !important; } .pages-box { padding: 10px 6px; } }
+
+.login-logo-img { display: block; width: 240px; max-width: 70%; height: auto; margin: 0 auto 14px; border-radius: 22px; box-shadow: 0 10px 30px rgba(20,10,60,.35); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
