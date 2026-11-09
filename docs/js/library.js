@@ -1502,6 +1502,7 @@ async function makeCombos() {
     const r = await apiJson('/api/admin/combos', jsonBody('POST', {}));
     LibState.contiKind = 'combo';
     await refreshAll();
+    openContiBuilder(true);   // 바로 배합으로 콘티 하나 짜서 보여주기
     showToast(`🧩 배합 ${r.created.length}개를 만들었어요${r.removed.length ? ` · 겹치는 배합 ${r.removed.length}개 지움` : ''}${r.originals_deleted.length ? ` · 원래 콘티 ${r.originals_deleted.length}개 지움` : ''}.`, 'success', 5000);
   } catch (e) {
     showToast('배합 만들기 실패: ' + e.message, 'error');
