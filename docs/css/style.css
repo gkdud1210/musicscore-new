@@ -2444,3 +2444,11 @@ html[data-theme="light"] .live-to-reset { color: #1d4ed8; }
   .live-top { column-gap: 6px; }
   .live-top-btn { padding: 8px 8px; font-size: 12px; }
 }
+
+/* 라이브: 두 번 톡 쳐도 확대·이동 안 함 — 두 손가락으로 벌릴 때만 확대 */
+.live-viewer, .live-viewer * { touch-action: manipulation; }
+.live-track:not(.vertical) { touch-action: pan-x pinch-zoom; }
+.live-track.vertical { touch-action: pan-y pinch-zoom; }
+.live-slide, .live-slide img { touch-action: inherit; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.live-viewer { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+.live-viewer input, .live-viewer textarea { -webkit-user-select: text; user-select: text; }

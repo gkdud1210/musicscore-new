@@ -911,6 +911,24 @@ document.addEventListener('keydown', e => {
   }
 });
 
+/* 라이브 화면: 한 손가락으로 두 번 톡 → 확대 막기 (두 손가락 확대는 그대로) */
+(() => {
+  let lastTap = 0;
+  document.addEventListener('touchend', e => {
+    if (!LiveState.viewerOpen || !e.target.closest?.('#liveTrack')) return;
+    if (e.touches.length || e.changedTouches.length !== 1) { lastTap = 0; return; }
+    const now = Date.now();
+    if (now - lastTap < 350) e.preventDefault();
+    lastTap = now;
+  }, { passive: false });
+  document.addEventListener('dblclick', e => {
+    if (LiveState.viewerOpen && e.target.closest?.('#liveViewer')) { e.preventDefault(); window.getSelection?.()?.removeAllRanges(); }
+  });
+  // 그림 길게 누르기·끌기로 움직이지 않게
+  document.addEventListener('dragstart', e => { if (e.target.closest?.('#liveTrack')) e.preventDefault(); });
+  document.addEventListener('contextmenu', e => { if (LiveState.viewerOpen && e.target.closest?.('#liveTrack img')) e.preventDefault(); });
+})();
+
 window.addEventListener('resize', () => {
   if (LiveState.viewerOpen) {
     const t = document.getElementById('liveTrack');
