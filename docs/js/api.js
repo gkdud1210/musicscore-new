@@ -319,7 +319,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 /* ============================================================
    접속자 수 — 화면이 열려 있는 동안 1분마다 "여기 있어요" 신호,
-   관리자에게는 위에 "👀 지금 N명" (누르면 오늘·최근 7일)
+   모두에게 위에 "👀 지금 N명" (누르면 누가 접속했는지 · 관리자는 오늘·최근 7일도)
    ============================================================ */
 function presenceId() {
   try {
@@ -344,7 +344,7 @@ function startPresence() {
   ping();
   setInterval(ping, 60000);
   document.addEventListener('visibilitychange', ping);
-  if (AuthState.canEdit && AuthState.hasAdmin) initVisitorBadge();
+  initVisitorBadge();
 }
 
 function initVisitorBadge() {
@@ -354,7 +354,7 @@ function initVisitorBadge() {
   btn.type = 'button';
   btn.className = 'header-account-btn visitor-badge';
   btn.textContent = '👀 …';
-  btn.title = '지금 접속 중인 사람 (누르면 오늘·최근 7일)';
+  btn.title = '지금 접속 중인 사람 (누르면 누가 있는지 보여요)';
   box.prepend(btn);
   const panel = document.createElement('div');
   panel.className = 'visitor-panel hidden';
@@ -362,13 +362,26 @@ function initVisitorBadge() {
   let last = null;
   const draw = () => {
     if (!last) return;
-    const max = Math.max(1, ...last.days.map(d => d.count));
-    const wd = ['일', '월', '화', '수', '목', '금', '토'];
-    panel.innerHTML = `
+    const people = last.people || [];
+    const who = people.length ? `<ul class="visitor-people">${people.map(p => {
+      const label = p.name || (p.role === 'admin' ? '관리자' : '팀원');
+      const tag = p.name && p.role === 'admin' ? '<small>관리자</small>' : '';
+      const many = p.count > 1 ? `<small>${p.count}대</small>` : '';
+      return `<li><span class="visitor-dot"></span>${escapeHtml(label)}${tag}${many}</li>`;
+    }).join('')}</ul>` : '<p class="visitor-note">지금 접속한 사람이 없어요.</p>';
+    const head = `
       <div class="visitor-panel-head">
         <b>지금 ${last.now}명</b>
         <span>관리자 ${last.now_admin} · 팀원 ${last.now_member}</span>
       </div>
+      ${who}`;
+    if (!last.days) {   // 팀원: 누가 접속했는지만
+      panel.innerHTML = head + '<p class="visitor-note">최근 2~3분 안에 화면을 보고 있던 사람이에요. 이름 없는 코드로 들어오면 "팀원"으로 보여요.</p>';
+      return;
+    }
+    const max = Math.max(1, ...last.days.map(d => d.count));
+    const wd = ['일', '월', '화', '수', '목', '금', '토'];
+    panel.innerHTML = head + `
       <div class="visitor-panel-today">오늘 들어온 기기 <b>${last.today}대</b></div>
       <div class="visitor-days">${last.days.map(d => {
         const dt = new Date(d.day + 'T00:00:00');
@@ -376,7 +389,7 @@ function initVisitorBadge() {
           <b>${d.count}</b><small>${dt.getMonth() + 1}/${dt.getDate()} ${wd[dt.getDay()]}</small></div>`;
       }).join('')}</div>
       <p class="visitor-note">같은 기기는 하루 한 번만 세요. "지금"은 최근 2~3분 안에 화면을 보고 있던 기기예요.</p>
-      <button type="button" class="btn-sm visitor-people-btn" data-people-open>👥 사람별 입장코드 관리</button>`;
+      ${AuthState.hasAdmin ? `<button type="button" class="btn-sm visitor-people-btn" data-people-open>👥 사람별 입장코드 관리</button>` : ''}`;
   };
   panel.addEventListener('click', e => {
     if (e.target.closest('[data-people-open]')) { panel.classList.add('hidden'); openPeopleEditor(); }

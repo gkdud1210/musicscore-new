@@ -149,9 +149,9 @@ function openLeaveChoice() {
   (document.fullscreenElement || document.getElementById('liveViewer') || document.body).appendChild(el);
 }
 
-async function stopLive(ask = true) {
+async function stopLive() {
   document.getElementById('liveLeaveSheet')?.remove();
-  if (ask && !confirm('라이브를 끝낼까요? 모든 사람의 라이브 화면이 닫혀요.')) return;
+  if (!confirm('라이브를 종료하시겠습니까?\n모든 사람의 라이브 화면이 닫혀요.')) return;
   try {
     await apiJson('/api/live', { method: 'DELETE' });
     LiveState.live = null;
@@ -275,7 +275,7 @@ function renderLiveIndicator() {
     ? `<button type="button" class="live-ind-expand" data-live="ind-expand" title="LIVE 표시 펼치기" aria-label="LIVE 표시 펼치기"><span class="live-dot"></span> LIVE</button>`
     : `<button type="button" class="live-ind-open" data-live="open"><span class="live-dot"></span> LIVE · ${escapeHtml(live.title)}</button>
     <button type="button" class="live-ind-invite" data-live="invite" title="모두에게 다시 초대 알림을 보내고 들어가요">📨 다시 초대</button>
-    ${live.mine ? '<button type="button" class="live-ind-end" data-live="stop" title="라이브 끝내기 (모두)">■ 끝내기</button>' : ''}
+    <button type="button" class="live-ind-end" data-live="stop" title="라이브 종료 (모두의 라이브 화면이 닫혀요)">■ 종료</button>
     <button type="button" class="live-ind-min" data-live="ind-min" title="작게 접기" aria-label="작게 접기">−</button>`;
   el.classList.toggle('hidden', LiveState.viewerOpen);
 }
@@ -423,7 +423,8 @@ function renderLiveSet() {
       <button type="button" class="live-top-btn" data-live="scroll-mode" title="${liveVertical() ? '옆으로 넘기기로 바꾸기' : '밑으로 스크롤로 바꾸기'}">${liveVertical() ? '↕ 스크롤' : '↔ 넘기기'}</button>
       <button type="button" class="live-top-btn" data-live="fullscreen" title="전체 화면">⛶</button>
       ${!server ? '<button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>'
-        : '<button type="button" class="live-top-btn" data-live="leave" title="내 화면만 닫아요. 라이브는 다른 사람들에게 계속돼요">🚪 나가기</button>'}
+        : `<button type="button" class="live-top-btn" data-live="leave" title="내 화면만 닫아요. 라이브는 다른 사람들에게 계속돼요">🚪 나가기</button>
+          <button type="button" class="live-top-btn end" data-live="stop" title="라이브 종료 (모두의 라이브 화면이 닫혀요)">■ 종료</button>`}
       <button type="button" class="live-top-btn top-fold" data-live="top-fold" title="${liveTopMin() ? '버튼 줄 펼치기' : '버튼 줄 접기'}" aria-label="${liveTopMin() ? '버튼 줄 펼치기' : '버튼 줄 접기'}">${liveTopMin() ? '▾' : '▴'}</button>
     </div>
     <div class="live-sets" id="liveSets" role="tablist" aria-label="콘티"></div>
@@ -745,23 +746,28 @@ function maybeShowLiveMessage(live, maxAge = 0) {
   if (!m || m.ts <= msgSeenTs(live)) return;
   setMsgSeen(live);
   if (maxAge && live.now_ms && live.now_ms - m.ts > maxAge) return;
-  if (LiveState.sentMsgTs === m.ts) return;   // 내가 보낸 건 나한테는 안 띄움
+  if (LiveState.sentMsgTs === m.ts) return;   // 내가 보낸 건 보낼 때 이미 띄웠음
   showLiveMessage(m.text, m.from);
 }
 
-function showLiveMessage(text, from = '') {
+/** sent 를 주면 "내가 보낸 메세지" — 받는 사람들에게 뜨는 모양 그대로 나한테도 보여준다 */
+function showLiveMessage(text, from = '', sent = null) {
   document.getElementById('liveMsg')?.remove();
   const el = document.createElement('button');
   el.type = 'button';
   el.id = 'liveMsg';
   el.className = 'live-msg';
   el.innerHTML = `${from ? `<span class="live-msg-from">💬 ${escapeHtml(from)}</span>` : ''}<span class="live-msg-text">${escapeHtml(text)}</span><span class="live-msg-hint">3초 뒤 사라져요 · 터치하면 바로</span>`;
+  if (sent) {
+    el.classList.add('sent');
+    el.insertAdjacentHTML('afterbegin', `<span class="live-msg-sent">✓ 보냈어요 · ${escapeHtml(sent)} 화면에 이렇게 떠요</span>`);
+  }
   el.addEventListener('click', () => el.remove());
   // 터치 안 해도 3초 뒤 저절로 사라진다
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, 3000);
   // 전체 화면이면 그 안에 붙여야 보인다
   (document.fullscreenElement || document.body).appendChild(el);
-  try { navigator.vibrate?.([120, 60, 120]); } catch { /* 진동 없음 */ }
+  if (!sent) try { navigator.vibrate?.([120, 60, 120]); } catch { /* 진동 없음 */ }
 }
 
 async function sendLiveMessage(text) {
@@ -776,7 +782,7 @@ async function sendLiveMessage(text) {
     document.getElementById('liveMsgPanel')?.classList.add('hidden');
     applyLive(live);
     const names = to ? LiveState.recipients.filter(x => to.includes(x.key)).map(x => x.name).join(', ') : '';
-    showToast(`💬 보냈어요${names ? ` (${names}에게만)` : ''}: ${text}`, 'success', 2500);
+    showLiveMessage(live.message.text, live.message.from, names ? `${names}` : '모두의');
   } catch (e) {
     showToast('메세지 보내기 실패: ' + e.message, 'error');
   }
@@ -980,7 +986,7 @@ document.addEventListener('click', e => {
       break;
     case 'close': closeLiveViewer(); break;
     case 'stop': stopLive(); break;
-    case 'stop-now': stopLive(false); break;
+    case 'stop-now': stopLive(); break;
     case 'prev': stepLive(-1); break;
     case 'next': stepLive(1); break;
     case 'set': switchLiveSet(Number(el.dataset.set)); break;

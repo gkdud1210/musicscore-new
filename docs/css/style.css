@@ -2350,6 +2350,8 @@ html[data-theme="light"] .live-word-edit { color: #555; }
 
 /* 보낸 사람 이름 */
 .live-msg-from { font-size: 15px; font-weight: 800; color: #f59e0b; }
+.live-msg-sent { font-size: 12px; font-weight: 700; color: #22c55e; }
+html[data-theme="light"] .live-msg-sent { color: #15803d; }
 html[data-theme="light"] .live-msg-from { color: #b45309; }
 html[data-theme="light"] .live-top-btn.msg { background: #3b82f6; border-color: #3b82f6; color: #fff; }
 .header-account-role.person { background: var(--accent-dim); color: var(--accent-light); }
@@ -2364,6 +2366,12 @@ html[data-theme="light"] .live-top-btn.msg { background: #3b82f6; border-color: 
 
 /* 👥 사람별 입장코드 */
 .visitor-people-btn { margin-top: 10px; width: 100%; }
+.visitor-people { list-style: none; margin: 10px 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
+.visitor-people li { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.visitor-people small { font-size: 11px; color: var(--text-muted); border: 1px solid var(--border, #333); border-radius: 6px; padding: 0 5px; }
+.visitor-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
+.live-top-btn.end { background: #7f1d1d; border-color: #b91c1c; color: #fff; font-weight: 700; }
+html[data-theme="light"] .live-top-btn.end { background: #dc2626; border-color: #dc2626; color: #fff; }
 .people-editor {
   position: fixed; inset: 0; z-index: 900; background: rgba(5,5,10,.7);
   display: flex; align-items: flex-start; justify-content: center; padding: 60px 12px; overflow-y: auto;

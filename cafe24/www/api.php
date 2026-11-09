@@ -78,7 +78,7 @@ $ROUTES = [
     ['DELETE', '#^/services/(\d{4}-\d{2}-\d{2})$#', 'api_delete_service', 'admin'],
 
     ['POST', '#^/ping$#', 'api_ping', 'member_ok'],
-    ['GET', '#^/visitors$#', 'api_visitors', 'admin'],
+    ['GET', '#^/visitors$#', 'api_visitors', 'member'],
 
     ['POST', '#^/admin/import$#', 'api_admin_import', 'admin'],
     ['POST', '#^/admin/rehash$#', 'api_admin_rehash', 'admin'],

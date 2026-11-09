@@ -16,9 +16,10 @@ function api_ping(): array
         $vid = 'h' . substr(hash('sha256', client_ip() . '|' . ($_SERVER['HTTP_USER_AGENT'] ?? '')), 0, 30);
     }
     $now = time();
-    q('INSERT INTO visits (vid, day, role, first_ts, last_ts) VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE last_ts = VALUES(last_ts), role = VALUES(role)',
-      [$vid, date('Y-m-d', $now), (string)current_role(), $now, $now]);
+    $u = current_user();
+    q('INSERT INTO visits (vid, day, role, name, first_ts, last_ts) VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE last_ts = VALUES(last_ts), role = VALUES(role), name = VALUES(name)',
+      [$vid, date('Y-m-d', $now), (string)($u['role'] ?? ''), mb_substr((string)($u['name'] ?? ''), 0, 40), $now, $now]);
     if (random_int(1, 200) === 1) q('DELETE FROM visits WHERE day < ?', [date('Y-m-d', $now - 180 * 86400)]);
     return ['ok' => true];
 }
@@ -27,9 +28,23 @@ function api_visitors(): array
 {
     $now = time();
     $today = date('Y-m-d', $now);
-    $online = q_all('SELECT role, COUNT(DISTINCT vid) AS n FROM visits WHERE last_ts > ? GROUP BY role', [$now - ONLINE_WINDOW]);
+    $online = q_all('SELECT role, name, COUNT(DISTINCT vid) AS n FROM visits WHERE last_ts > ? GROUP BY role, name', [$now - ONLINE_WINDOW]);
     $byRole = ['admin' => 0, 'member' => 0];
-    foreach ($online as $r) $byRole[$r['role'] === 'admin' ? 'admin' : 'member'] += (int)$r['n'];
+    $people = [];
+    foreach ($online as $r) {
+        $role = $r['role'] === 'admin' ? 'admin' : 'member';
+        $byRole[$role] += (int)$r['n'];
+        $people[] = ['name' => (string)$r['name'], 'role' => $role, 'count' => (int)$r['n']];
+    }
+    // 이름 있는 사람 먼저 (가나다순), 이름 없는 팀원·관리자는 뒤로
+    usort($people, fn($a, $b) => [$a['name'] === '', $a['name'], $a['role']] <=> [$b['name'] === '', $b['name'], $b['role']]);
+    $base = [
+        'now' => $byRole['admin'] + $byRole['member'],
+        'now_admin' => $byRole['admin'],
+        'now_member' => $byRole['member'],
+        'people' => $people,
+    ];
+    if (!can_edit(current_role())) return $base;
     $days = [];
     $rows = q_all('SELECT day, COUNT(*) AS n FROM visits WHERE day >= ? GROUP BY day', [date('Y-m-d', $now - 6 * 86400)]);
     $map = [];
@@ -38,10 +53,7 @@ function api_visitors(): array
         $d = date('Y-m-d', $now - $i * 86400);
         $days[] = ['day' => $d, 'count' => $map[$d] ?? 0];
     }
-    return [
-        'now' => $byRole['admin'] + $byRole['member'],
-        'now_admin' => $byRole['admin'],
-        'now_member' => $byRole['member'],
+    return $base + [
         'today' => $map[$today] ?? 0,
         'days' => $days,
     ];

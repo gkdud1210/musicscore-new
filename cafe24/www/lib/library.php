@@ -1051,10 +1051,8 @@ function api_put_quick_messages(): array
 
 function api_stop_live(): array
 {
-    live_update(function (?array $live) {
-        if ($live && !live_is_owner($live)) throw new ApiError(403, '라이브는 처음 시작한 사람만 끝낼 수 있어요. 나가기를 눌러주세요');
-        return null;
-    });
+    // 누구나 끝낼 수 있어요 (화면에서 "라이브를 종료하시겠습니까?" 한 번 더 물어봐요)
+    live_update(fn(?array $live) => null);
     setcookie(LIVE_COOKIE, '', ['expires' => time() - 3600, 'path' => '/']);
     return ['live' => null];
 }
