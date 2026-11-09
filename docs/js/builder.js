@@ -105,13 +105,22 @@ function cbSlotHtml(s, i) {
   return `<div class="cb-slot">${head}
     <div class="cb-slot-pick">
       <select class="lib-edit-title-input cb-select" data-cb-select="${i}" aria-label="${cbLabel(s.cat)} 고르기">
-        ${list.map(x => `<option value="${x.id}"${x.id === s.id ? ' selected' : ''}>${escapeHtml(cbSource(x))} · ${x.songs.length}곡</option>`).join('')}
+        ${list.map(x => `<option value="${x.id}"${x.id === s.id ? ' selected' : ''}>${escapeHtml(cbName(x))}</option>`).join('')}
       </select>
       <button type="button" class="btn-sm cb-reroll" data-cb="reroll" data-i="${i}"${list.length > 1 ? '' : ' disabled'}>🔄 다른 배합</button>
       ${c ? `<button type="button" class="btn-sm" data-action="open-conti" data-id="${c.id}" title="이 배합 열어보기">📄</button>` : ''}
     </div>
     <div class="conti-songs">${c ? c.songs.map((x, k) => `<span class="conti-song-chip">${k + 1}. ${escapeHtml(x.title)}${x.key ? ` <b>${escapeHtml(x.key)}</b>` : ''}</span>`).join('') : ''}</div>
   </div>`;
+}
+
+/** 콘티 짜기에서 보이는 배합 이름: 첫 곡 제목 (코드) · 곡 수 · 날짜 — 예) "은혜 아니면 (G → A) · 2곡 · 11/6" */
+function cbName(c) {
+  const first = c.songs[0]?.title || '제목 없음';
+  const keys = [];
+  c.songs.forEach(x => { if (x.key && keys[keys.length - 1] !== x.key) keys.push(x.key); });
+  const d = c.conti_date ? ` · ${Number(c.conti_date.slice(5, 7))}/${Number(c.conti_date.slice(8, 10))}` : '';
+  return `${first}${keys.length ? ` (${keys.join(' → ')})` : ''} · ${c.songs.length}곡${d}`;
 }
 
 /** "설교 전 느린 곡 — 6월13일금요일" → "6월13일금요일" (이름에 날짜가 없으면 날짜를 붙여서) */
