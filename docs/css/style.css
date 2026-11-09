@@ -2452,3 +2452,20 @@ html[data-theme="light"] .live-to-reset { color: #1d4ed8; }
 .live-slide, .live-slide img { touch-action: inherit; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .live-viewer { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 .live-viewer input, .live-viewer textarea { -webkit-user-select: text; user-select: text; }
+
+/* 검색칸 ✕ */
+.clear-wrap { position: relative; display: block; width: 100%; }
+.clear-wrap > input { padding-right: 40px !important; }
+.clear-btn {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 28px; height: 28px; border-radius: 50%; border: 0; display: none;
+  align-items: center; justify-content: center; cursor: pointer;
+  background: var(--border-light); color: var(--text-primary); font-size: 13px; line-height: 1;
+}
+.clear-wrap.has-value .clear-btn { display: inline-flex; }
+.clear-btn:hover { background: var(--accent); color: #fff; }
+.live-viewer .clear-btn { background: #3a3a46; color: #fff; }
+html[data-theme="light"] .live-viewer .clear-btn { background: #d0d2dc; color: #000; }
+.live-add-search + .clear-btn { top: calc(50% - 3px); }
+input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+.lib-search-icon { z-index: 1; }

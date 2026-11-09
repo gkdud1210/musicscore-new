@@ -621,3 +621,41 @@ async function saveOrShareFile(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
   return 'downloaded';
 }
+
+/* ============================================================
+   검색칸 ✕ — 누르면 글자를 한 번에 지운다
+   ============================================================ */
+const CLEARABLE_SEL = '#librarySearch, #wsSearch, #liveAddSearch, .ws-search, .live-add-search[type="search"]';
+function attachClearBtn(input) {
+  if (input.dataset.clearReady) return;
+  input.dataset.clearReady = '1';
+  const wrap = document.createElement('span');
+  wrap.className = 'clear-wrap';
+  const hadFocus = document.activeElement === input;
+  const [a, b] = [input.selectionStart, input.selectionEnd];
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  if (hadFocus) { input.focus(); try { input.setSelectionRange(a, b); } catch { /* 일부 입력칸은 안 됨 */ } }
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'clear-btn';
+  btn.setAttribute('aria-label', '검색어 지우기');
+  btn.title = '지우기';
+  btn.textContent = '✕';
+  wrap.appendChild(btn);
+  const sync = () => wrap.classList.toggle('has-value', !!input.value);
+  input.addEventListener('input', sync);
+  btn.addEventListener('mousedown', e => e.preventDefault());   // 키보드가 내려가지 않게
+  btn.addEventListener('click', () => {
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    sync();
+    input.focus();
+  });
+  sync();
+}
+function attachClearBtns(root = document) { root.querySelectorAll?.(CLEARABLE_SEL).forEach(attachClearBtn); }
+window.addEventListener('DOMContentLoaded', () => {
+  attachClearBtns();
+  new MutationObserver(() => attachClearBtns()).observe(document.body, { childList: true, subtree: true });
+});
