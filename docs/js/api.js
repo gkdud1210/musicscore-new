@@ -394,8 +394,11 @@ function initVisitorBadge() {
     e.stopPropagation();
     const r = btn.getBoundingClientRect();
     panel.style.top = `${r.bottom + 8}px`;
-    panel.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
     panel.classList.toggle('hidden');
+    // 화면 밖으로 안 나가게: 버튼 오른쪽 끝에 맞추되 좌우 8px 안쪽으로
+    const w = panel.offsetWidth || 280;
+    panel.style.right = 'auto';
+    panel.style.left = `${Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8))}px`;
     if (!panel.classList.contains('hidden')) load();
   });
   document.addEventListener('click', e => { if (!panel.contains(e.target)) panel.classList.add('hidden'); });

@@ -2042,7 +2042,7 @@ form.dirty .lib-edit-title-input { border-color: #f59e0b; background: rgba(245,1
 
 /* 접속자 수 (관리자) */
 .visitor-panel {
-  position: fixed; z-index: 400; width: 280px; max-width: calc(100vw - 16px);
+  position: fixed; z-index: 400; width: 280px; max-width: calc(100vw - 16px); box-sizing: border-box;
   background: var(--bg-secondary); border: 1px solid var(--border);
   border-radius: var(--radius-md, 12px); padding: 14px 16px;
   box-shadow: 0 12px 32px rgba(0,0,0,0.35);
@@ -2056,6 +2056,7 @@ form.dirty .lib-edit-title-input { border-color: #f59e0b; background: rgba(245,1
 .visitor-day { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 3px; }
 .visitor-bar { width: 100%; min-height: 2px; background: var(--amber); border-radius: 3px 3px 0 0; opacity: 0.8; }
 .visitor-day b { font-size: 11px; }
+.visitor-day { min-width: 0; }
 .visitor-day small { font-size: 9px; color: var(--text-muted); white-space: nowrap; }
 .visitor-note { font-size: 11px; color: var(--text-muted); margin-top: 10px; line-height: 1.5; }
 @media (max-width: 640px) {
@@ -2502,3 +2503,5 @@ html[data-theme="light"] .pages-box { background: rgba(40,42,60,.6); }
 
 .login-logo-img { display: block; width: 240px; max-width: 70%; height: auto; margin: 0 auto 14px; border-radius: 22px; box-shadow: 0 10px 30px rgba(20,10,60,.35); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+/* 아주 작은 폰: 머리줄 버튼이 잘리지 않게 로고 글자 숨김 */
+@media (max-width: 360px) { .header .logo-text { display: none; } }
