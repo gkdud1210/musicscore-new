@@ -259,3 +259,45 @@ async function clientReprocess(contiId) {
   })();
   return conti;
 }
+
+/* ── 콘티 사진 고치기: 바꾸기 / 넣기 (지우기는 library.js) ───────────── */
+async function pagePhotoForm(file, withThumb) {
+  const src = await decodeImage(file);
+  const fd = new FormData();
+  fd.append('image', await imageToJpeg(src, PAGE_IMAGE_WIDTH), 'page.jpg');
+  fd.append('width', '595');
+  fd.append('height', String(Math.round(595 * src.height / src.width)));
+  if (withThumb) fd.append('thumb', await imageToJpeg(src, THUMB_WIDTH, 0.8), 'thumb.jpg');
+  src.close?.();
+  return fd;
+}
+
+/** 새 사진을 AI로 읽고(실패해도 계속) 곡 정리 */
+async function readEditedPage(contiId, n) {
+  try {
+    await postWithRetry(`/api/scores/${contiId}/pages/${n}/read`, jsonBody('POST', { reuse: true }), `${n}쪽 읽기`);
+  } catch (e) { console.warn(e); }
+  return postWithRetry(`/api/scores/${contiId}/pages/${n}/done`, jsonBody('POST', {}), '곡 정리');
+}
+
+async function replacePagePhoto(contiId, n, file, onProgress) {
+  onProgress?.('사진 올리는 중');
+  const fd = await pagePhotoForm(file, n === 1);
+  await postWithRetry(`/api/scores/${contiId}/pages/${n}/replace`, { method: 'POST', body: fd }, '사진 바꾸기');
+  onProgress?.('AI가 읽는 중');
+  return readEditedPage(contiId, n);
+}
+
+/** at 쪽 자리부터 사진들을 차례로 넣는다 */
+async function insertPagePhotos(contiId, at, files, onProgress) {
+  let last = null;
+  for (let i = 0; i < files.length; i++) {
+    onProgress?.(`사진 넣는 중 ${i + 1}/${files.length}장`);
+    const fd = await pagePhotoForm(files[i], at + i === 1);
+    fd.append('at', String(at + i));
+    const r = await postWithRetry(`/api/scores/${contiId}/pages/insert`, { method: 'POST', body: fd }, `${i + 1}번째 사진 넣기`);
+    onProgress?.(`AI가 읽는 중 ${i + 1}/${files.length}장`);
+    last = await readEditedPage(contiId, r.page_number);
+  }
+  return last;
+}

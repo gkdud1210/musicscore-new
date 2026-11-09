@@ -18,7 +18,12 @@ const SONG_SELECT = "SELECT so.*, sc.title AS conti_title, sc.conti_date AS cont
 function image_urls(int $scoreId, int $start, int $end): array
 {
     $out = [];
-    for ($n = $start; $n <= $end; $n++) $out[] = "/api/scores/$scoreId/pages/$n/image";
+    // ?v= : 사진을 바꾸거나 앞 사진을 지워 번호가 당겨지면 주소가 바뀌어서 브라우저가 옛 그림을 안 보여준다
+    for ($n = $start; $n <= $end; $n++) {
+        $f = page_file($scoreId, $n);
+        $v = is_file($f) ? dechex((int)filemtime($f)) . dechex((int)filesize($f)) : '0';
+        $out[] = "/api/scores/$scoreId/pages/$n/image?v=$v";
+    }
     return $out;
 }
 
@@ -261,6 +266,145 @@ function api_upload_page(int $id, int $n): array
       [$id, $n, $w > 0 ? $w : 595, $hh > 0 ? $hh : 842, $h]);
     touch_score($id, 'processing', "올리는 중 $n/{$s['page_count']}쪽");
     return ['page_number' => $n, 'ok' => true];
+}
+
+/* ── 콘티 사진 고치기: 바꾸기 / 지우기 / 넣기 ─────────────────────
+ * 사진을 바꾸거나 넣은 뒤에는 화면이 /read(AI로 읽기) → /done(곡 정리) 를 차례로 부른다.
+ * 배합 콘티 등 다른 콘티가 같은 그림을 나눠 쓰고 있어도(하드 링크) 그쪽 그림은 그대로 남는다.
+ */
+function upload_page_meta(): array
+{
+    $w = (float)($_POST['width'] ?? 595);
+    $h = (float)($_POST['height'] ?? 842);
+    return [$w > 0 ? $w : 595, $h > 0 ? $h : 842];
+}
+
+/** [from..to] 쪽을 d(+1 / -1)만큼 옮긴다: 그림 파일 · pages · annotations (곡 범위는 부르는 쪽에서) */
+function shift_pages(int $id, int $from, int $to, int $d): void
+{
+    if ($from > $to) return;
+    $nums = range($from, $to);
+    if ($d > 0) $nums = array_reverse($nums);
+    foreach ($nums as $n) {
+        if (is_file(page_file($id, $n)) && !@rename(page_file($id, $n), page_file($id, $n + $d))) {
+            throw new ApiError(500, '사진 순서를 바꾸지 못했어요');
+        }
+    }
+    foreach (['pages', 'annotations'] as $t) {   // 기본 키가 겹치지 않게 두 번에 나눠 옮긴다
+        q("UPDATE $t SET page_number = page_number + 100000 WHERE score_id = ? AND page_number BETWEEN ? AND ?", [$id, $from, $to]);
+        q("UPDATE $t SET page_number = page_number - 100000 + ? WHERE score_id = ? AND page_number >= 100000", [$d, $id]);
+    }
+}
+
+/** 콘티 전체 코드·가사 (검색용) 다시 모으기 */
+function refresh_score_text(int $id): void
+{
+    $chords = [];
+    $lyrics = [];
+    foreach (page_dicts($id, 1, 100000) as $p) {
+        foreach ($p['chords'] as $c) $chords[$c] = true;
+        $lyrics[] = $p['lyrics_text'];
+    }
+    $cs = array_keys($chords);
+    sort($cs);
+    q('UPDATE scores SET chords_text = ?, lyrics_text = ?, updated_at = NOW() WHERE id = ?', [implode(' ', $cs), implode("\n", $lyrics), $id]);
+}
+
+function api_replace_page(int $id, int $n): array
+{
+    $s = score_row($id);
+    if ($n < 1 || $n > (int)$s['page_count']) throw new ApiError(400, '페이지 번호가 잘못됐어요');
+    score_dir($id);
+    $path = page_file($id, $n);
+    save_uploaded_jpeg('image', $path, 8 * 1024 * 1024);
+    if ($n === 1) {
+        if (!empty($_FILES['thumb'])) save_uploaded_jpeg('thumb', thumb_file($id), 2 * 1024 * 1024);
+        else @unlink(thumb_file($id));
+    }
+    [$w, $h] = upload_page_meta();
+    q("INSERT INTO pages (score_id, page_number, width, height, h, analyzed, chords_json) VALUES (?, ?, ?, ?, ?, 0, '[]')
+       ON DUPLICATE KEY UPDATE width = VALUES(width), height = VALUES(height), h = VALUES(h), analyzed = 0,
+         title_guess = NULL, has_title = 0, key_explicit = '', chords_json = '[]', lyrics_text = NULL",
+      [$id, $n, $w, $h, page_hash_file($path)]);
+    q('DELETE FROM annotations WHERE score_id = ? AND page_number = ?', [$id, $n]);   // 옛 사진 위의 필기는 안 맞아요
+    touch_score($id);
+    return ['page_number' => $n, 'ok' => true];
+}
+
+/** 사진 넣기: at 쪽 자리에 (뒤 사진들은 한 칸씩 밀림). at 이 곡 중간이면 그 곡의 한 쪽이 된다 */
+function api_insert_page(int $id): array
+{
+    $s = score_row($id);
+    $count = (int)$s['page_count'];
+    if ($count >= 300) throw new ApiError(400, '한 콘티에 300장까지 넣을 수 있어요');
+    $at = max(1, min($count + 1, (int)($_POST['at'] ?? $count + 1)));
+    $tmp = score_dir($id) . '/upload.tmp.jpg';
+    save_uploaded_jpeg('image', $tmp, 8 * 1024 * 1024);
+    [$w, $h] = upload_page_meta();
+    $hash = page_hash_file($tmp);
+    db()->beginTransaction();
+    try {
+        shift_pages($id, $at, $count, 1);
+        q('UPDATE songs SET page_start = page_start + 1 WHERE score_id = ? AND page_start >= ?', [$id, $at]);
+        q('UPDATE songs SET page_end = page_end + 1 WHERE score_id = ? AND page_end >= ?', [$id, $at]);
+        if (!@rename($tmp, page_file($id, $at))) throw new ApiError(500, '사진을 저장하지 못했어요');
+        q("INSERT INTO pages (score_id, page_number, width, height, h, analyzed, chords_json) VALUES (?, ?, ?, ?, ?, 0, '[]')",
+          [$id, $at, $w, $h, $hash]);
+        q('UPDATE scores SET page_count = page_count + 1, updated_at = NOW() WHERE id = ?', [$id]);
+        db()->commit();
+    } catch (Throwable $e) {
+        db()->rollBack();
+        @unlink($tmp);
+        throw $e;
+    }
+    if ($at === 1) {
+        if (!empty($_FILES['thumb'])) save_uploaded_jpeg('thumb', thumb_file($id), 2 * 1024 * 1024);
+        else @unlink(thumb_file($id));
+    }
+    return ['page_number' => $at, 'ok' => true];
+}
+
+/** 사진 지우기: 그 쪽을 콘티에서 없애고 뒤 사진들을 한 칸씩 당긴다 */
+function api_delete_page(int $id, int $n): array
+{
+    $s = score_row($id);
+    $count = (int)$s['page_count'];
+    if ($n < 1 || $n > $count) throw new ApiError(400, '페이지 번호가 잘못됐어요');
+    if ($count <= 1) throw new ApiError(400, '마지막 한 장은 지울 수 없어요. 콘티를 통째로 지워주세요');
+    $touched = array_map('intval', array_column(
+        q_all('SELECT id FROM songs WHERE score_id = ? AND page_start <= ? AND page_end >= ? AND page_start < page_end', [$id, $n, $n]), 'id'));
+    db()->beginTransaction();
+    try {
+        q('DELETE FROM songs WHERE score_id = ? AND page_start = ? AND page_end = ?', [$id, $n, $n]);
+        q('UPDATE songs SET page_end = page_end - 1 WHERE score_id = ? AND page_end >= ?', [$id, $n]);
+        q('UPDATE songs SET page_start = page_start - 1 WHERE score_id = ? AND page_start > ?', [$id, $n]);
+        q('DELETE FROM pages WHERE score_id = ? AND page_number = ?', [$id, $n]);
+        q('DELETE FROM annotations WHERE score_id = ? AND page_number = ?', [$id, $n]);
+        @unlink(page_file($id, $n));
+        shift_pages($id, $n + 1, $count, -1);
+        q('UPDATE scores SET page_count = page_count - 1 WHERE id = ?', [$id]);
+        foreach ($touched as $sid) recompute_song($sid);
+        refresh_score_text($id);
+        db()->commit();
+    } catch (Throwable $e) {
+        db()->rollBack();
+        throw $e;
+    }
+    if ($n === 1) @unlink(thumb_file($id));   // 표지는 새 1쪽으로
+    return summary_by_id($id);
+}
+
+/** 바꾸거나 넣은 사진을 읽은 뒤: 그 쪽이 든 곡을 다시 계산 (어느 곡에도 없으면 새 곡으로) */
+function api_page_done(int $id, int $n): array
+{
+    $s = score_row($id);
+    if ($n < 1 || $n > (int)$s['page_count']) throw new ApiError(400, '페이지 번호가 잘못됐어요');
+    $songs = q_all('SELECT id FROM songs WHERE score_id = ? AND page_start <= ? AND page_end >= ?', [$id, $n, $n]);
+    if ($songs) foreach ($songs as $r) recompute_song((int)$r['id']);
+    else insert_song($id, $n, $n);
+    refresh_score_text($id);
+    touch_score($id, 'ready', '');
+    return summary_by_id($id);
 }
 
 function store_page_result(int $id, array $p): void

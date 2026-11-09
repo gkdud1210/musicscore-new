@@ -918,7 +918,8 @@ function renderContiModal(conti, songs) {
             <div class="conti-song-head"><span class="lib-card-nochords">곡에 포함되지 않은 페이지</span>
               <button class="btn-sm" data-action="add-page-song" data-score="${conti.id}" data-page="${b.orphan}">＋ 곡으로 추가</button></div>
             ${pagesOpenBtn(1)}
-            <div class="song-pages small"><figure class="song-page">${img(`/api/scores/${conti.id}/pages/${b.orphan}/image`, '')}<figcaption>p.${b.orphan}</figcaption></figure></div>
+            <div class="song-pages small"><figure class="song-page">${img(`/api/scores/${conti.id}/pages/${b.orphan}/image?v=${encodeURIComponent(conti.updated_at || '')}`, '')}<figcaption><span>p.${b.orphan}</span>
+              <span class="page-tools">${photoTools(conti.id, b.orphan)}</span></figcaption></figure></div>
           </div>`;
       }
       const s = b.song;
@@ -954,15 +955,19 @@ function renderContiModal(conti, songs) {
                 <figcaption><span>p.${page}</span>
                   <span class="page-tools">
                     ${i > 0 ? `<button type="button" class="btn-sm" data-action="split" data-id="${s.id}" data-page="${page}" title="이 페이지부터 별도의 곡으로 나눠요 (콘티 순서는 그대로)">✂ 따로 분리</button>` : ''}
-                    <button type="button" class="btn-sm" data-action="remove-page" data-id="${s.id}" data-page="${page}" title="이 페이지만 곡에서 빼요 (PDF 원본은 그대로)">🗑 페이지 빼기</button>
+                    <button type="button" class="btn-sm" data-action="remove-page" data-id="${s.id}" data-page="${page}" title="이 페이지만 곡에서 빼요 (사진은 콘티에 남아요)">🗑 곡에서 빼기</button>
+                    ${photoTools(conti.id, page)}
                   </span>
                 </figcaption>
               </figure>`;
             }).join('')}
+            ${isPhpServer() && !s.use_song_id ? `<button type="button" class="song-page photo-add-tile" data-action="photo-add" data-score="${conti.id}" data-at="${s.page_end + 1}" title="이 곡 바로 뒤에 사진을 넣어요 (여러 장 가능)">＋<span>사진 추가</span></button>` : ''}
           </div>
         </div>`;
     }).join('')}
     </div>
+    ${isPhpServer() ? `<div class="photo-add-row"><button type="button" class="btn-sm" data-action="photo-add" data-score="${conti.id}" data-at="${conti.page_count + 1}">📷 맨 뒤에 사진 추가</button>
+      <span class="ai-row-sub">사진은 여러 장 한 번에 고를 수 있어요. 넣은 사진은 AI가 읽어서 새 곡으로 만들어요.</span></div>` : ''}
     ${pending ? `<div class="review-footer">${confirmBtn}</div>` : ''}
     <div class="save-all-bar hidden" id="saveAllBar">
       <span id="saveAllCount"></span>
@@ -971,6 +976,54 @@ function renderContiModal(conti, songs) {
     </div>`;
   applyContiView(conti.id);
   updateSaveAllBar();
+}
+
+/** 사진 한 장의 🔄 바꾸기 / ❌ 지우기 (카페24 서버에서만) */
+function photoTools(scoreId, page) {
+  if (!isPhpServer()) return '';
+  return `<button type="button" class="btn-sm" data-action="photo-replace" data-score="${scoreId}" data-page="${page}" title="이 사진을 내 사진으로 바꿔요">🔄 사진 바꾸기</button>
+    <button type="button" class="btn-sm danger" data-action="photo-delete" data-score="${scoreId}" data-page="${page}" title="이 사진을 콘티에서 아예 지워요">❌ 사진 지우기</button>`;
+}
+
+/** 사진 고르기 창 → 고른 파일들 (취소하면 빈 배열) */
+function pickPhotos(multiple) {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*,.heic,.heif';
+    input.multiple = multiple;
+    input.style.display = 'none';
+    input.addEventListener('change', () => { resolve([...input.files].filter(isImageFile)); input.remove(); });
+    input.addEventListener('cancel', () => { resolve([]); input.remove(); });
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
+async function photoEdit(kind, scoreId, page) {
+  if (!(await saveAllConti({ reload: false, quiet: true }))) return;
+  try {
+    if (kind === 'delete') {
+      if (!confirm(`p.${page} 사진을 지울까요?\n뒤의 사진들이 한 칸씩 앞으로 당겨져요. 이 사진 위의 필기도 같이 지워져요.`)) return;
+      await apiJson(`/api/scores/${scoreId}/pages/${page}`, { method: 'DELETE' });
+      showToast(`p.${page} 사진을 지웠어요.`, 'success');
+    } else {
+      const files = await pickPhotos(kind === 'add');
+      if (!files.length) return;
+      const progress = t => showToast(`📷 ${t}...`, 'info', 4000);
+      if (kind === 'replace') {
+        await replacePagePhoto(scoreId, page, files[0], progress);
+        showToast(`p.${page} 사진을 바꿨어요. 제목·키를 확인해주세요.`, 'success');
+      } else {
+        await insertPagePhotos(scoreId, page, files, progress);
+        showToast(`사진 ${files.length}장을 넣었어요. 제목·키를 확인해주세요.`, 'success');
+      }
+    }
+  } catch (e) {
+    showToast('사진 고치기 실패: ' + e.message, 'error');
+  }
+  LibState.modalDirty = true;
+  await reloadContiModal();
 }
 
 /** 설교 전/후, 느린/빠른 고르기 (같은 줄에서 하나만, 다시 누르면 해제) */
@@ -1351,6 +1404,9 @@ function initDelegatedActions() {
         contiAction(() => apiJson(`/api/songs/${id}/remove-page`, jsonBody('POST', { page: Number(el.dataset.page) })),
           `p.${el.dataset.page}를 뺐어요 (다시 넣으려면 "＋ 곡으로 추가")`);
         break;
+      case 'photo-replace': photoEdit('replace', Number(el.dataset.score), Number(el.dataset.page)); break;
+      case 'photo-delete': photoEdit('delete', Number(el.dataset.score), Number(el.dataset.page)); break;
+      case 'photo-add': photoEdit('add', Number(el.dataset.score), Number(el.dataset.at)); break;
       case 'confirm-conti':
         el.disabled = true;
         if (await saveAllConti({ reload: false, quiet: true })) confirmConti(id);

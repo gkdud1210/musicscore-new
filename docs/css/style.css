@@ -2540,3 +2540,10 @@ html[data-theme="light"] .live-add-head { color: #444; }
 
 /* 🧩 배합 만들기 (관리자) */
 .combo-make-btn { margin-left: auto; }
+
+/* 콘티 사진 고치기 */
+.photo-add-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 120px;
+  background: transparent; border: 2px dashed var(--border-light); color: var(--text-secondary); font-size: 28px; cursor: pointer; font-family: var(--font-main); }
+.photo-add-tile span { font-size: 12px; }
+.photo-add-tile:hover { border-color: var(--amber); color: var(--amber); }
+.photo-add-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
