@@ -902,6 +902,7 @@ function renderContiModal(conti, songs) {
           <div class="conti-song orphan">
             <div class="conti-song-head"><span class="lib-card-nochords">곡에 포함되지 않은 페이지</span>
               <button class="btn-sm" data-action="add-page-song" data-score="${conti.id}" data-page="${b.orphan}">＋ 곡으로 추가</button></div>
+            ${pagesOpenBtn(1)}
             <div class="song-pages small"><figure class="song-page">${img(`/api/scores/${conti.id}/pages/${b.orphan}/image`, '')}<figcaption>p.${b.orphan}</figcaption></figure></div>
           </div>`;
       }
@@ -929,6 +930,7 @@ function renderContiModal(conti, songs) {
           ${s.use_song_id ? `<p class="conti-hint kept-hint">⭐ 같은 제목·키의 남긴 악보로 보여주고 있어요.
             <button type="button" class="btn-link" data-action="restore-sheet" data-id="${s.id}">↩ 이 콘티의 원래 악보로</button></p>` : ''}
           ${suspicious ? '<p class="conti-hint">코드와 키를 찾지 못했어요. 표지·순서지라면 "곡에서 빼기"를 눌러주세요.</p>' : ''}
+          ${pagesOpenBtn(s.image_urls.length)}
           <div class="song-pages small">
             ${s.image_urls.map((u, i) => {
               const page = s.page_start + i;
@@ -1113,6 +1115,7 @@ function renderContiModalReadOnly(conti, songs) {
           ${songTags({ tempo: s.tempo })}
           ${addButton(s)}
         </div>
+        ${pagesOpenBtn(s.image_urls.length)}
         <div class="song-pages small">${s.image_urls.map(u => `<div class="song-page">${img(u, s.title)}</div>`).join('')}</div>
       </div>`).join('')}
     </div>`;
@@ -1126,8 +1129,39 @@ const CONTI_VIEWS = [['rows', '☰ 한 줄씩'], ['cols-2', '▦ 2칸'], ['cols-
 function getContiView() {
   let v = null;
   try { v = localStorage.getItem('jandi.view.conti'); } catch { /* 저장 불가 */ }
-  return CONTI_VIEWS.some(x => x[0] === v) ? v : 'rows';
+  if (CONTI_VIEWS.some(x => x[0] === v)) return v;
+  // 아이패드(큰 터치 화면)는 2칸이 기본
+  const isTablet = (navigator.maxTouchPoints > 1 && Math.min(screen.width, screen.height) >= 700)
+    || window.matchMedia('(min-width: 700px) and (pointer: coarse)').matches;
+  return isTablet ? 'cols-2' : 'rows';
 }
+
+/** 한 줄씩 보기에선 악보 그림을 숨기고, 이 버튼으로 창에 띄운다 */
+function pagesOpenBtn(n) {
+  return `<button type="button" class="btn-sm song-pages-open" data-action="open-pages">🖼 악보 보기${n > 1 ? ` (${n}장)` : ''}</button>`;
+}
+
+function openPagesBox(btn) {
+  const song = btn.closest('.conti-song');
+  const pages = song?.querySelector('.song-pages');
+  if (!pages) return;
+  closePagesBox();
+  const title = song.querySelector('.conti-song-head input[name="title"]')?.value
+    || song.querySelector('.conti-song-title')?.textContent || '악보';
+  const box = document.createElement('div');
+  box.id = 'pagesBox';
+  box.className = 'pages-box';
+  box.innerHTML = `<div class="pages-box-inner" role="dialog" aria-modal="true" aria-label="악보 보기">
+      <div class="pages-box-head"><b>${escapeHtml(title)}</b><button type="button" class="pages-box-x" aria-label="닫기">✕</button></div>
+      <div class="song-pages pages-box-pages">${pages.innerHTML}</div>
+    </div>`;
+  box.addEventListener('click', e => {
+    if (e.target === box || e.target.closest('.pages-box-x')) closePagesBox();
+    else if (e.target.closest('[data-action]')) setTimeout(closePagesBox, 0);   // 따로 분리·페이지 빼기를 누르면 창은 닫는다
+  });
+  document.body.appendChild(box);
+}
+function closePagesBox() { document.getElementById('pagesBox')?.remove(); }
 function contiViewBar() {
   return `<div class="conti-view-bar" id="contiViewBar">
     <div class="lib-view-toggle" role="group" aria-label="곡 보기 방식">
@@ -1202,6 +1236,7 @@ function closeModal(force = false) {
     }
   }
   clearTimeout(LibState.modalPoll);
+  closePagesBox();
   document.getElementById('libModal').classList.add('hidden');
   document.querySelector('.lib-modal-box')?.classList.remove('wide');
   document.body.classList.remove('modal-open');
@@ -1213,6 +1248,7 @@ function closeModal(force = false) {
 }
 
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('pagesBox')) { closePagesBox(); return; }
   if (e.key === 'Escape' && LibState.modal) closeModal();
   if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && LibState.modal?.type === 'conti'
       && document.getElementById('contiSongsWrap')?.classList.contains('view-one')
@@ -1307,6 +1343,7 @@ function initDelegatedActions() {
         applyContiView(undefined, el.dataset.view);
         break;
       case 'conti-one': showContiOne(Number(el.dataset.step)); break;
+      case 'open-pages': openPagesBox(el); break;
       case 'review-next': {
         const next = LibState.contis.find(x => !x.confirmed);
         if (next) openContiModal(next.id);
