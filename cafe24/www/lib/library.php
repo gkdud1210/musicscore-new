@@ -92,6 +92,7 @@ function score_summary(array $row, bool $detail = false): array
         'id' => $id,
         'title' => $row['title'],
         'page_count' => (int)$row['page_count'],
+        'combo' => !empty($row['combo']),
         'chords' => $chords,
         'thumbnail_url' => "/api/scores/$id/thumbnail",
         'created_at' => $row['created_at'],
@@ -875,17 +876,63 @@ function save_setlist(array $ids, string $title, bool $withAnnot, ?string $date 
 }
 
 /* ── 🧩 배합 콘티 ─────────────────────────────────────────────
- * 콘티마다 분류(설교 전/후 × 느린/빠른)가 같은 곡끼리 묶어서 "배합 · 설교 전 느린 곡 — 원래 콘티" 로 따로 저장.
- * 같은 분류에 같은 곡들(순서 상관없이)이면 하나만 남긴다. 원래 콘티는 그대로 둔다.
- * 분류 안 된 곡은 건너뛴다 — 나중에 분류하고 다시 누르면 새로 생긴 배합만 더해진다. 2곡 이상인 묶음만.
+ * 콘티마다 분류(설교 전/후 × 느린/빠른)가 같은 곡끼리 묶어서 "설교 전 느린 곡 — 원래 콘티" 로 따로 저장 (scores.combo = 1).
+ * 같은 분류에 같은 곡들(순서 상관없이)이면 하나만 남긴다.
+ * 원래 콘티는 모든 곡이 배합으로 옮겨졌으면 지운다 (필기는 배합으로 옮김). 분류 안 된 곡이 있거나 예배 셋팅에 쓰인 콘티는 남긴다.
  */
-const COMBO_PREFIX = '배합 · ';
-
 function combo_label(string $section, string $tempo): string
 {
     $parts = array_filter([['before' => '설교 전', 'after' => '설교 후'][$section] ?? '',
                            ['slow' => '느린 곡', 'fast' => '빠른 곡'][$tempo] ?? '']);
     return implode(' ', $parts);
+}
+
+/** 예배 셋팅에 쓰인 콘티 id → 셋팅 날짜 */
+function service_conti_ids(): array
+{
+    $out = [];
+    foreach (q_all("SELECT k, v FROM app_state WHERE k LIKE 'service:%'") as $r) {
+        $d = json_decode((string)$r['v'], true) ?: [];
+        $songIds = [];
+        foreach ($d['sets'] ?? [] as $st) {
+            if (!empty($st['conti_id'])) $out[(int)$st['conti_id']] = substr($r['k'], 8);
+            foreach ($st['song_ids'] ?? [] as $sid) $songIds[] = (int)$sid;
+        }
+        if ($songIds) {
+            foreach (q_all('SELECT DISTINCT score_id FROM songs WHERE id IN (' . marks_sql($songIds) . ')', $songIds) as $x) {
+                $out[(int)$x['score_id']] = substr($r['k'], 8);
+            }
+        }
+    }
+    return $out;
+}
+
+/** 지우기 전에: 원래 콘티의 즐겨찾기 표시와 필기를 그 곡을 옮겨 간 배합 콘티로 (배합 쪽에 필기가 없는 쪽만) */
+function move_annotations_to_combos(int $scoreId): void
+{
+    // 콘티 즐겨찾기 표시(⭐🟠 등)도 그 콘티에서 나온 배합들로
+    $marks = array_column(q_all('SELECT mark FROM song_marks WHERE group_key = ?', ["conti:$scoreId"]), 'mark');
+    if ($marks) {
+        $combos = q_all('SELECT DISTINCT c.score_id FROM songs c JOIN scores sc ON sc.id = c.score_id AND sc.combo = 1
+                         JOIN songs o ON o.id = c.matched_from WHERE o.score_id = ?', [$scoreId]);
+        foreach ($combos as $cb) foreach ($marks as $m) {
+            q('INSERT IGNORE INTO song_marks (group_key, mark) VALUES (?, ?)', ['conti:' . (int)$cb['score_id'], $m]);
+        }
+        q('DELETE FROM song_marks WHERE group_key = ?', ["conti:$scoreId"]);
+    }
+    $notes = annotations_of($scoreId);
+    if (!$notes) return;
+    $rows = q_all('SELECT c.score_id, c.page_start AS c_start, c.page_end AS c_end, o.page_start AS o_start
+                   FROM songs c JOIN scores sc ON sc.id = c.score_id AND sc.combo = 1
+                   JOIN songs o ON o.id = c.matched_from
+                   WHERE o.score_id = ? AND o.use_song_id IS NULL', [$scoreId]);
+    foreach ($rows as $r) {
+        for ($p = (int)$r['c_start']; $p <= (int)$r['c_end']; $p++) {
+            $strokes = $notes[(int)$r['o_start'] + $p - (int)$r['c_start']] ?? [];
+            if ($strokes) q('INSERT IGNORE INTO annotations (score_id, page_number, strokes_json) VALUES (?, ?, ?)',
+                            [(int)$r['score_id'], $p, json_encode($strokes)]);
+        }
+    }
 }
 
 function api_admin_combos(): array
@@ -899,11 +946,10 @@ function api_admin_combos(): array
     };
     $songsBy = [];
     foreach (q_all('SELECT * FROM songs ORDER BY score_id, page_start') as $r) $songsBy[(int)$r['score_id']][] = $r;
-    $scores = q_all("SELECT id, title, conti_date, from_setlist FROM scores WHERE status = 'ready'
+    $scores = q_all("SELECT id, title, conti_date, from_setlist, combo FROM scores WHERE status = 'ready'
                      ORDER BY COALESCE(conti_date, '0000-00-00') DESC, id DESC");
-    $keyOf = function (string $sec, string $tempo, array $rows) use ($root): ?string {
+    $keyOf = function (string $sec, string $tempo, array $rows) use ($root): string {
         $roots = array_values(array_unique(array_map($root, $rows)));
-        if (count($roots) < 2) return null;
         sort($roots);
         return "$sec|$tempo|" . implode(',', $roots);
     };
@@ -912,11 +958,10 @@ function api_admin_combos(): array
     $have = [];
     $remove = [];
     foreach (array_reverse($scores) as $sc) {            // 오래된 것을 남긴다
-        if (!$sc['from_setlist'] || !str_starts_with((string)$sc['title'], COMBO_PREFIX)) continue;
+        if (!$sc['combo']) continue;
         $rows = $songsBy[(int)$sc['id']] ?? [];
         if (!$rows) continue;
         $k = $keyOf((string)$rows[0]['section'], (string)$rows[0]['tempo'], $rows);
-        if ($k === null) continue;
         if (isset($have[$k])) $remove[] = ['id' => (int)$sc['id'], 'title' => $sc['title'], 'same_as' => $have[$k]['title']];
         else $have[$k] = ['id' => (int)$sc['id'], 'title' => $sc['title']];
     }
@@ -926,20 +971,24 @@ function api_admin_combos(): array
     $dups = [];
     $skippedSongs = 0;
     $unlabeledContis = 0;
+    $deleteOrig = [];
+    $keptForService = [];
+    $inService = service_conti_ids();
     foreach ($scores as $sc) {
-        if ($sc['from_setlist']) continue;
+        if ($sc['from_setlist'] || $sc['combo']) continue;
         $rows = $songsBy[(int)$sc['id']] ?? [];
         $groups = [];
+        $unlabeled = 0;
         foreach ($rows as $r) {
-            if ($r['section'] === '' && $r['tempo'] === '') { $skippedSongs++; continue; }
+            if ($r['section'] === '' && $r['tempo'] === '') { $unlabeled++; continue; }
             $groups[$r['section'] . '|' . $r['tempo']][] = $r;
         }
+        $skippedSongs += $unlabeled;
         if ($rows && !$groups) $unlabeledContis++;
         foreach ($groups as $g => $grow) {
             [$sec, $tempo] = explode('|', $g);
             $k = $keyOf($sec, $tempo, $grow);
-            if ($k === null) continue;
-            $title = mb_substr(COMBO_PREFIX . combo_label($sec, $tempo) . ' — ' . trim((string)$sc['title']), 0, 200);
+            $title = mb_substr(combo_label($sec, $tempo) . ' — ' . trim((string)$sc['title']), 0, 200);
             if (isset($have[$k])) { $dups[] = ['title' => $title, 'same_as' => $have[$k]['title']]; continue; }
             $ids = [];
             $seen = [];
@@ -947,14 +996,44 @@ function api_admin_combos(): array
             $have[$k] = ['id' => 0, 'title' => $title];
             $create[] = ['title' => $title, 'ids' => $ids, 'date' => $sc['conti_date'] ?: null, 'songs' => count($ids)];
         }
+        // 모든 곡이 배합으로 옮겨졌으면 원래 콘티는 지운다
+        if ($rows && !$unlabeled) {
+            if (isset($inService[(int)$sc['id']])) $keptForService[] = ['title' => $sc['title'], 'service' => $inService[(int)$sc['id']]];
+            else $deleteOrig[] = ['id' => (int)$sc['id'], 'title' => $sc['title']];
+        }
     }
 
     if (!$dry) {
-        foreach ($create as &$c) $c['id'] = save_setlist($c['ids'], $c['title'], false, $c['date']);
+        foreach ($create as &$c) {
+            $c['id'] = save_setlist($c['ids'], $c['title'], true, $c['date']);   // 필기도 같이
+            q('UPDATE scores SET combo = 1 WHERE id = ?', [$c['id']]);
+        }
         unset($c);
         foreach ($remove as $rm) {
             q('DELETE FROM scores WHERE id = ?', [$rm['id']]);
             rrmdir(DATA_DIR . "/scores/{$rm['id']}");
+        }
+        // 지울 콘티의 악보를 "남긴 악보"로 쓰던 곡들은 배합 쪽 같은 악보로 다시 잇는다
+        $comboByRoot = [];
+        foreach (q_all('SELECT so.* FROM songs so JOIN scores sc ON sc.id = so.score_id AND sc.combo = 1 WHERE so.use_song_id IS NULL ORDER BY so.id') as $r) {
+            $comboByRoot[$root($r)] ??= (int)$r['id'];
+        }
+        foreach ($deleteOrig as $o) {
+            $gone = array_map('intval', array_column(q_all('SELECT id FROM songs WHERE score_id = ?', [$o['id']]), 'id'));
+            if (!$gone) continue;
+            foreach (q_all('SELECT id, use_song_id FROM songs WHERE use_song_id IN (' . marks_sql($gone) . ')', $gone) as $u) {
+                $x = (int)$u['use_song_id'];
+                $to = q_val('SELECT c.id FROM songs c JOIN scores sc ON sc.id = c.score_id AND sc.combo = 1
+                             WHERE c.matched_from = ? AND c.use_song_id IS NULL ORDER BY c.id LIMIT 1', [$x]);
+                $xr = q_one('SELECT * FROM songs WHERE id = ?', [$x]);
+                $to = $to ? (int)$to : ($xr ? ($comboByRoot[$root($xr)] ?? null) : null);
+                q('UPDATE songs SET use_song_id = ? WHERE id = ?', [$to && $to !== (int)$u['id'] ? $to : null, (int)$u['id']]);
+            }
+        }
+        foreach ($deleteOrig as $o) {
+            move_annotations_to_combos($o['id']);
+            q('DELETE FROM scores WHERE id = ?', [$o['id']]);
+            rrmdir(DATA_DIR . "/scores/{$o['id']}");
         }
     }
     return [
@@ -962,6 +1041,8 @@ function api_admin_combos(): array
         'created' => array_map(fn($c) => ['title' => $c['title'], 'songs' => $c['songs']], $create),
         'duplicates_skipped' => $dups,
         'removed' => $remove,
+        'originals_deleted' => $deleteOrig,
+        'originals_kept_for_service' => $keptForService,
         'unlabeled_songs' => $skippedSongs,
         'unlabeled_contis' => $unlabeledContis,
     ];

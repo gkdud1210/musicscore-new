@@ -712,8 +712,7 @@ const CONTI_CATS = [
 ];
 const contiCatTest = val => (CONTI_CATS.find(c => c[0] === val) || [])[2];
 /** 🧩 배합 콘티: 콘티에서 같은 분류(설교 전 느린 곡 등)끼리만 모아 따로 저장한 것 (서버 /api/admin/combos) */
-const COMBO_PREFIX = '배합 · ';
-const isCombo = c => String(c.title || '').startsWith(COMBO_PREFIX);
+const isCombo = c => !!c.combo;
 const contiKindTest = c => !LibState.contiKind || (LibState.contiKind === 'combo') === isCombo(c);
 
 function renderContiFilters(all) {
@@ -1485,21 +1484,25 @@ async function makeCombos() {
     showToast('배합을 찾는 중...', 'info', 2000);
     const dry = await apiJson('/api/admin/combos', jsonBody('POST', { dry_run: true }));
     const nNew = dry.created.length, nDup = dry.duplicates_skipped.length, nRm = dry.removed.length;
-    if (!nNew && !nRm) {
+    const nDel = dry.originals_deleted.length;
+    if (!nNew && !nRm && !nDel) {
       showToast(`새로 만들 배합이 없어요.${dry.unlabeled_songs ? ` 분류 안 된 곡 ${dry.unlabeled_songs}개는 콘티를 열어 설교 전/후·느린/빠른을 골라주세요.` : ''}`, 'info', 5000);
       return;
     }
-    const msg = [`🧩 배합 콘티 ${nNew}개를 만들까요?`,
-      '(설교 전 느린 곡, 설교 전 빠른 곡처럼 같은 분류끼리 모아요. 원래 콘티는 그대로 있어요.)',
+    const kept = dry.originals_kept_for_service || [];
+    const msg = [nNew ? `🧩 배합 콘티 ${nNew}개를 만들까요?` : '🧩 배합을 정리할까요?',
+      '(설교 전 느린 곡, 설교 전 빠른 곡처럼 같은 분류끼리 모아요.)',
       nDup ? `· 같은 곡들로 겹치는 배합 ${nDup}개는 하나만 남겨요.` : '',
       nRm ? `· 이미 있는 배합 중 겹치는 ${nRm}개는 지워요.` : '',
-      dry.unlabeled_songs ? `· 분류 안 된 곡 ${dry.unlabeled_songs}개는 건너뛰어요.` : ''].filter(Boolean).join('\n');
+      nDel ? `· 모든 곡이 배합으로 옮겨진 원래 콘티 ${nDel}개는 지워요 (필기·표시는 배합으로 옮겨요).` : '',
+      kept.length ? `· 예배 셋팅에 쓰인 콘티 ${kept.length}개는 남겨요.` : '',
+      dry.unlabeled_songs ? `· 분류 안 된 곡 ${dry.unlabeled_songs}개가 있는 콘티는 그대로 남겨요.` : ''].filter(Boolean).join('\n');
     if (!confirm(msg)) return;
     showToast('배합 콘티를 만드는 중... (조금 걸려요)', 'info', 8000);
     const r = await apiJson('/api/admin/combos', jsonBody('POST', {}));
     LibState.contiKind = 'combo';
     await refreshAll();
-    showToast(`🧩 배합 ${r.created.length}개를 만들었어요${r.removed.length ? ` · 겹치는 배합 ${r.removed.length}개 지움` : ''}.`, 'success', 5000);
+    showToast(`🧩 배합 ${r.created.length}개를 만들었어요${r.removed.length ? ` · 겹치는 배합 ${r.removed.length}개 지움` : ''}${r.originals_deleted.length ? ` · 원래 콘티 ${r.originals_deleted.length}개 지움` : ''}.`, 'success', 5000);
   } catch (e) {
     showToast('배합 만들기 실패: ' + e.message, 'error');
   }
