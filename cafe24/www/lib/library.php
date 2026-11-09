@@ -804,7 +804,7 @@ function live_public(?array $live): ?array
     $mine = live_is_owner($live);
     unset($live['owner']);
     $live['mine'] = $mine;
-    $live['can_edit'] = $mine || can_edit(current_role());
+    $live['can_edit'] = $mine || current_user() !== null;   // 팀원 누구나 콘티를 더할 수 있다
     $live['can_msg'] = $live['can_edit'] || can_message();
     $live['now_ms'] = (int)(microtime(true) * 1000);
     // 받는 사람을 고른 메세지는 그 사람(과 보낸 사람)에게만
@@ -927,7 +927,7 @@ function api_start_live(): array
 function live_require_editor(?array $live): array
 {
     if (!$live) throw new ApiError(404, '지금 진행 중인 라이브가 없어요');
-    if (!live_is_owner($live) && !can_edit(current_role())) throw new ApiError(403, '관리자만 라이브를 고칠 수 있어요');
+    if (!live_is_owner($live) && current_user() === null) throw new ApiError(403, '입장한 사람만 라이브를 고칠 수 있어요');
     return $live;
 }
 

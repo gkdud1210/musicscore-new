@@ -1,7 +1,7 @@
 /**
  * 라이브 모드 (함께 보는 콘티)
  * - 누가 📡 라이브를 시작하면 서버에 올라가고, 접속한 사람들은 몇 초마다 확인하다 깜빡이는 알림을 받는다.
- * - 라이브가 켜져 있는 동안 관리자는 누구나 ＋ 콘티로 콘티를 더할 수 있고, 모두의 위 메뉴에 같이 생긴다.
+ * - 라이브가 켜져 있는 동안 팀원 누구나 ＋ 콘티로 콘티를 더할 수 있고, 모두의 위 메뉴에 같이 생긴다.
  * - 📣 알림주기: 지금 보고 있는 콘티(곡)로 모두의 화면이 넘어간다.
  * - 🚪 나가기는 내 화면만. 라이브를 켠 사람은 나가기에서 "나만 나가기 / 라이브 끝내기"를 고른다.
  * - 📨 다시 초대: 나갔던 사람까지 다시 알림, OKAY 하면 들어온다.
@@ -413,6 +413,7 @@ function renderLiveSet() {
   LiveState.slides = slides;
   const live = LiveState.live;
   const server = !V.local && live && live.id === V.id;
+  v.classList.toggle('top-min', liveTopMin());
   v.innerHTML = `
     <div class="live-top">
       <span class="live-badge"><span class="live-dot"></span> ${V.local ? '보기' : 'LIVE'}</span>
@@ -423,6 +424,7 @@ function renderLiveSet() {
       <button type="button" class="live-top-btn" data-live="fullscreen" title="전체 화면">⛶</button>
       ${!server ? '<button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>'
         : '<button type="button" class="live-top-btn" data-live="leave" title="내 화면만 닫아요. 라이브는 다른 사람들에게 계속돼요">🚪 나가기</button>'}
+      <button type="button" class="live-top-btn top-fold" data-live="top-fold" title="${liveTopMin() ? '버튼 줄 펼치기' : '버튼 줄 접기'}" aria-label="${liveTopMin() ? '버튼 줄 펼치기' : '버튼 줄 접기'}">${liveTopMin() ? '▾' : '▴'}</button>
     </div>
     <div class="live-sets" id="liveSets" role="tablist" aria-label="콘티"></div>
     <div class="live-add hidden" id="liveAdd"></div>
@@ -469,6 +471,21 @@ function switchLiveSet(i, at = 'keep') {
   if (at === 'first') V.pos[key] = 0;
   if (at === 'last') V.pos[key] = Math.max(0, liveSlides(V.sets[i]).length - 1);
   renderLiveSet();
+}
+
+/* 위 버튼 줄 접기/펼치기 — 기기마다 기억 (접으면 곡 제목과 ▾ 만 남는다) */
+const LIVE_TOPMIN_KEY = 'jandi.live.topMin';
+const liveTopMin = () => lsGet(LIVE_TOPMIN_KEY) === '1';
+function toggleLiveTop() {
+  lsSet(LIVE_TOPMIN_KEY, liveTopMin() ? '' : '1');
+  const v = document.getElementById('liveViewer');
+  v?.classList.toggle('top-min', liveTopMin());
+  const b = v?.querySelector('.top-fold');
+  if (b) {
+    b.textContent = liveTopMin() ? '▾' : '▴';
+    b.title = liveTopMin() ? '버튼 줄 펼치기' : '버튼 줄 접기';
+    b.setAttribute('aria-label', b.title);
+  }
 }
 
 /* ↔ 옆으로 넘기기 / ↕ 밑으로 스크롤 — 기기마다 기억 */
@@ -600,17 +617,54 @@ async function openLiveAdd() {
   const V = LiveState.viewing;
   const shared = V && !V.local && LiveState.live?.can_edit;
   const inLive = new Set((V?.sets || []).map(st => st.conti_id).filter(Boolean));
+  // 즐겨찾기 표시 (⭐❤️…) — 라이브러리 화면과 같은 것
+  let marks = (typeof LibState !== 'undefined' && LibState.marks) || null;
+  if (!marks || !Object.keys(marks).length) { try { marks = (await apiJson('/api/marks')).marks || {}; } catch { marks = {}; } }
+  const mk = k => marks[k] || [];
+  const markOfConti = c => mk(`conti:${c.id}`);
+  const songMarks = s => mk(String(s.title || '').toLowerCase().replace(/[^0-9a-z가-힣]/g, ''));
+  const favSongs = [];   // 즐겨찾기한 곡 (제목 하나에 한 번)
+  const seenSong = new Set();
+  const groups = (typeof LibState !== 'undefined' && LibState.groups) || [];
+  if (groups.length) {
+    groups.filter(g => mk(g.key).length).forEach(g => { favSongs.push({ song: g.main, marks: mk(g.key) }); });
+  } else {
+    contis.forEach(c => c.songs.forEach(s => {
+      const m = songMarks(s); const k = normQ(s.title);
+      if (m.length && !seenSong.has(k)) { seenSong.add(k); favSongs.push({ song: s, marks: m }); }
+    }));
+  }
   box.innerHTML = `
-    <p class="live-add-note">${shared ? '👥 여기서 더한 콘티는 <b>모두의 화면</b>에 같이 생겨요.' : '내 화면에만 더해져요.'}</p>
+    <p class="live-add-note">${shared ? '👥 더한 콘티는 <b>모두의 화면</b>에 같이 생겨요. <b>📣 띄우기</b>를 누르면 더하면서 모두의 화면을 그 콘티로 넘겨요.' : '내 화면에만 더해져요.'}</p>
     <input type="search" class="live-add-search" id="liveAddSearch" placeholder="콘티 이름·날짜·찬양 제목으로 찾기" />
     <div class="live-add-list" id="liveAddList"></div>`;
+  const notifyBtn = (attrs) => shared ? `<button type="button" class="live-add-notify" ${attrs} title="더하고 모두의 화면을 여기로 넘겨요">📣 띄우기</button>` : '';
+  const contiRow = ({ c, hits }) => {
+    const has = inLive.has(c.id);
+    const m = markOfConti(c);
+    return `<div class="live-add-row">
+      <button type="button" class="live-add-item" data-live="add-conti" data-id="${c.id}" ${has ? 'disabled' : ''}>
+        ${m.length ? `<b class="live-add-marks">${m.join('')}</b> ` : ''}${c.conti_date ? `<span>${escapeHtml(c.conti_date)}</span> ` : ''}${escapeHtml(c.title)} <small>${has ? '✓ 이미 있음' : `${c.songs.length}곡`}</small>
+        ${hits.length ? `<em class="live-add-hits">🎵 ${hits.map(escapeHtml).join(', ')}</em>` : ''}</button>
+      ${notifyBtn(`data-live="add-conti-notify" data-id="${c.id}"`)}
+    </div>`;
+  };
+  const songRow = ({ song, marks: m }) => `<div class="live-add-row">
+      <button type="button" class="live-add-item" data-live="add-song" data-id="${song.id}" data-title="${escapeHtml(song.title)}">
+        <b class="live-add-marks">${m.join('')}</b> 🎵 ${escapeHtml(song.title)}${song.key ? ` <small>${escapeHtml(song.key)}</small>` : ''}</button>
+      ${notifyBtn(`data-live="add-song-notify" data-id="${song.id}" data-title="${escapeHtml(song.title)}"`)}
+    </div>`;
   const draw = q => {
     const rows = filterContisByQuery(contis, q);
+    const favContis = q ? [] : contis.filter(c => markOfConti(c).length).map(c => ({ c, hits: [] }));
+    const nq = normQ(q);
+    const favS = q ? favSongs.filter(f => normQ(f.song.title).includes(nq)) : favSongs;
     document.getElementById('liveAddList').innerHTML = `
       ${!q && setlist.length ? `<button type="button" class="live-add-item" data-live="add-setlist">🎼 담은 곡 (${setlist.length}곡)</button>` : ''}
-      ${rows.slice(0, 80).map(({ c, hits }) => `<button type="button" class="live-add-item" data-live="add-conti" data-id="${c.id}" ${inLive.has(c.id) ? 'disabled' : ''}>
-          ${c.conti_date ? `<span>${escapeHtml(c.conti_date)}</span> ` : ''}${escapeHtml(c.title)} <small>${inLive.has(c.id) ? '✓ 이미 있음' : `${c.songs.length}곡`}</small>
-          ${hits.length ? `<em class="live-add-hits">🎵 ${hits.map(escapeHtml).join(', ')}</em>` : ''}</button>`).join('')
+      ${favContis.length ? `<p class="live-add-head">⭐ 즐겨찾기 콘티</p>${favContis.map(contiRow).join('')}` : ''}
+      ${favS.length ? `<p class="live-add-head">⭐ 즐겨찾기 곡</p>${favS.slice(0, 60).map(songRow).join('')}` : ''}
+      ${!q && (favContis.length || favSongs.length) ? '<p class="live-add-head">📁 모든 콘티</p>' : ''}
+      ${rows.slice(0, 80).map(contiRow).join('')
         || '<p class="live-add-empty">찾는 콘티가 없어요.</p>'}`;
   };
   draw('');
@@ -620,19 +674,32 @@ async function openLiveAdd() {
 }
 
 /** 고른 콘티를 더하기: 함께 보는 라이브면 서버에(모두에게), 아니면 내 화면에만 */
-async function addLiveSet(set) {
+async function addLiveSet(set, notify = false) {
   const V = LiveState.viewing;
   if (!V || !set?.songs?.length) return;
   document.getElementById('liveAdd')?.classList.add('hidden');
   if (!V.local && LiveState.live?.can_edit) {
     try {
-      const { live, added_key } = await apiJson('/api/live/sets', jsonBody('POST', {
-        title: set.title, conti_id: set.conti_id || null, song_ids: set.songs.map(s => s.id),
-      }));
-      LiveState.live = live;
-      syncLiveViewerQuiet(live);
-      if (added_key) switchLiveSetKey(added_key, 'first');
-      showToast(added_key ? `"${set.title}"을(를) 라이브에 더했어요. 모두의 화면에 보여요.` : '이미 라이브에 있는 콘티예요.', 'success');
+      // 이미 라이브에 있는 콘티면 더하지 않고 그 콘티로
+      const existing = set.conti_id ? V.sets.find(st => !st.mine && st.conti_id === set.conti_id) : null;
+      let key = existing?.key;
+      if (!existing) {
+        const { live, added_key } = await apiJson('/api/live/sets', jsonBody('POST', {
+          title: set.title, conti_id: set.conti_id || null, song_ids: set.songs.map(s => s.id),
+        }));
+        LiveState.live = live;
+        syncLiveViewerQuiet(live);
+        key = added_key || [...live.sets].reverse().find(st => st.title === set.title)?.key;
+      }
+      if (key) switchLiveSetKey(key, 'first');
+      if (notify && key) {
+        const { live } = await apiJson('/api/live/focus', jsonBody('POST', { key, song: 0 }));
+        setFocusSeen(live);
+        applyLive(live);
+        showToast(`📣 "${set.title}"을(를) 모두의 화면에 띄웠어요.`, 'success');
+        return;
+      }
+      showToast(!existing ? `"${set.title}"을(를) 라이브에 더했어요. 모두의 화면에 보여요.` : '이미 라이브에 있는 콘티예요.', 'success');
     } catch (e) {
       showToast('콘티 더하기 실패: ' + e.message, 'error');
     }
@@ -919,12 +986,22 @@ document.addEventListener('click', e => {
     case 'set': switchLiveSet(Number(el.dataset.set)); break;
     case 'fullscreen': toggleLiveFullscreen(); break;
     case 'add-set': openLiveAdd(); break;
-    case 'add-conti': {
+    case 'add-conti':
+    case 'add-conti-notify': {
       const c = (typeof LibState !== 'undefined' && LibState.contis || []).find(x => x.id === Number(el.dataset.id));
-      liveSetFromConti(Number(el.dataset.id), c?.title || el.textContent.trim())
-        .then(addLiveSet).catch(err => showToast('불러오기 실패: ' + err.message, 'error'));
+      const notify = el.dataset.live === 'add-conti-notify';
+      liveSetFromConti(Number(el.dataset.id), c?.title || el.closest('.live-add-row')?.querySelector('.live-add-item')?.textContent.trim() || '콘티')
+        .then(set => addLiveSet(set, notify)).catch(err => showToast('불러오기 실패: ' + err.message, 'error'));
       break;
     }
+    case 'add-song':
+    case 'add-song-notify': {
+      const notify = el.dataset.live === 'add-song-notify';
+      liveSetFromSongIds([Number(el.dataset.id)], el.dataset.title || '곡')
+        .then(set => addLiveSet(set, notify)).catch(err => showToast('불러오기 실패: ' + err.message, 'error'));
+      break;
+    }
+    case 'top-fold': toggleLiveTop(); break;
     case 'add-setlist':
       liveSetFromSongIds(LibState.setlist.map(s => s.id), '담은 곡')
         .then(addLiveSet).catch(err => showToast('불러오기 실패: ' + err.message, 'error'));
