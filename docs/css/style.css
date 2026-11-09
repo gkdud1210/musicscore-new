@@ -2505,3 +2505,9 @@ html[data-theme="light"] .pages-box { background: rgba(40,42,60,.6); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
 /* 아주 작은 폰: 머리줄 버튼이 잘리지 않게 로고 글자 숨김 */
 @media (max-width: 360px) { .header .logo-text { display: none; } }
+/* LIVE 표시 접기 */
+.live-ind-min { flex-shrink: 0; width: 30px; height: 30px; border-radius: 50%; border: 0; background: rgba(0,0,0,.25);
+  color: #fff; font: 900 18px/1 var(--font-main); cursor: pointer; display: grid; place-items: center; padding: 0; }
+.live-indicator.min { padding: 3px; opacity: .92; }
+.live-ind-expand { display: flex; align-items: center; gap: 6px; background: none; border: 0; color: #fff;
+  font: 900 12px var(--font-main); padding: 7px 10px; cursor: pointer; }

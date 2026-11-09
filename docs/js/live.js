@@ -269,10 +269,27 @@ function renderLiveIndicator() {
     el.className = 'live-indicator';
     document.body.appendChild(el);
   }
-  el.innerHTML = `<button type="button" class="live-ind-open" data-live="open"><span class="live-dot"></span> LIVE · ${escapeHtml(live.title)}</button>
+  const min = liveIndMinimized(live);
+  el.classList.toggle('min', min);
+  el.innerHTML = min
+    ? `<button type="button" class="live-ind-expand" data-live="ind-expand" title="LIVE 표시 펼치기" aria-label="LIVE 표시 펼치기"><span class="live-dot"></span> LIVE</button>`
+    : `<button type="button" class="live-ind-open" data-live="open"><span class="live-dot"></span> LIVE · ${escapeHtml(live.title)}</button>
     <button type="button" class="live-ind-invite" data-live="invite" title="모두에게 다시 초대 알림을 보내고 들어가요">📨 다시 초대</button>
-    ${live.mine ? '<button type="button" class="live-ind-end" data-live="stop" title="라이브 끝내기 (모두)">■ 끝내기</button>' : ''}`;
+    ${live.mine ? '<button type="button" class="live-ind-end" data-live="stop" title="라이브 끝내기 (모두)">■ 끝내기</button>' : ''}
+    <button type="button" class="live-ind-min" data-live="ind-min" title="작게 접기" aria-label="작게 접기">−</button>`;
   el.classList.toggle('hidden', LiveState.viewerOpen);
+}
+
+/* LIVE 표시 접기/펼치기 (기기마다 기억, 새 라이브가 시작되면 다시 펼쳐짐) */
+function liveIndMinimized(live) {
+  try { return localStorage.getItem('jandi.live.indMin') === String(live.id); } catch { return false; }
+}
+function setLiveIndMinimized(min) {
+  try {
+    if (min && LiveState.live) localStorage.setItem('jandi.live.indMin', String(LiveState.live.id));
+    else localStorage.removeItem('jandi.live.indMin');
+  } catch { /* 저장 불가 */ }
+  renderLiveIndicator();
 }
 
 /** 📨 다시 초대: 나갔던 사람까지 모두에게 알림 → OKAY 하면 들어온다. 나는 바로 들어간다 */
@@ -860,6 +877,8 @@ document.addEventListener('click', e => {
       break;
     }
     case 'open': openLiveViewer(); break;
+    case 'ind-min': setLiveIndMinimized(true); break;
+    case 'ind-expand': setLiveIndMinimized(false); break;
     case 'scroll-mode': toggleLiveScrollMode(); break;
     case 'invite': inviteLive(); break;
     case 'leave':
