@@ -15,7 +15,7 @@
   <meta name="application-name" content="J&amp;I worship" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=3" />
   <link rel="icon" type="image/png" href="icons/icon-192.png?v=3" />
-  <link rel="stylesheet" href="css/style.css?v=38" />
+  <link rel="stylesheet" href="css/style.css?v=39" />
 </head>
 <body class="login-page">
   <main class="login-box">
@@ -26,6 +26,7 @@
       <input type="text" name="username" value="scoreshift" autocomplete="username" hidden />
       <input type="password" id="loginPassword" class="lib-search-input login-input" placeholder="비밀번호"
              autocomplete="current-password" required autofocus />
+      <label class="login-remember"><input type="checkbox" id="loginRemember" checked /> 이 기기에 입장코드 저장 (다음부터 바로 들어가기)</label>
       <button type="submit" class="btn-primary login-btn" id="loginBtn">들어가기</button>
       <p class="login-error" id="loginError" role="alert"></p>
     </form>
@@ -40,8 +41,11 @@
       document.getElementById('loginSub').textContent = '관리자 비밀번호를 입력하면 업로드·수정·삭제를 할 수 있어요';
     }
 
-    document.getElementById('loginForm').addEventListener('submit', async e => {
-      e.preventDefault();
+    const CODE_KEY = 'jandi.code';
+    const savedCode = (() => { try { return localStorage.getItem(CODE_KEY) || ''; } catch (e) { return ''; } })();
+    let autoTry = false;
+
+    async function doLogin() {
       const btn = document.getElementById('loginBtn');
       const err = document.getElementById('loginError');
       err.textContent = '';
@@ -54,16 +58,38 @@
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.detail || `오류 (${res.status})`);
+        // 이 기기에 입장코드 저장 → 다음부터 자동으로 들어가기
+        try {
+          if (document.getElementById('loginRemember').checked) localStorage.setItem(CODE_KEY, document.getElementById('loginPassword').value);
+          else localStorage.removeItem(CODE_KEY);
+        } catch (e) {}
         // 들어간 화면에서 "OO님 어서 오세요" 한 번 띄우기
         try { sessionStorage.setItem('jandi.welcome', data.name || (data.role === 'admin' ? '관리자' : '팀원')); } catch (e) {}
         location.replace(safeNext);
       } catch (ex) {
+        if (autoTry) {
+          // 저장된 코드가 바뀌었으면 지우고 다시 입력받기
+          try { localStorage.removeItem(CODE_KEY); } catch (e) {}
+          document.getElementById('loginPassword').value = '';
+          ex = new Error('저장된 입장코드가 바뀌었어요. 다시 입력해주세요');
+        }
+        autoTry = false;
         err.textContent = ex.message;
         document.getElementById('loginPassword').select();
       } finally {
         btn.disabled = false;
       }
-    });
+    }
+
+    document.getElementById('loginForm').addEventListener('submit', e => { e.preventDefault(); autoTry = false; doLogin(); });
+
+    // 저장된 코드가 있으면 바로 들어가기 (관리자 로그인 화면은 제외)
+    if (savedCode && !params.get('admin')) {
+      document.getElementById('loginPassword').value = savedCode;
+      document.getElementById('loginSub').textContent = '저장된 입장코드로 들어가는 중...';
+      autoTry = true;
+      doLogin();
+    }
 
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   </script>

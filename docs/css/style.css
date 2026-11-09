@@ -1705,6 +1705,8 @@ body.read-only .admin-only { display: none !important; }
 .login-form { display: flex; flex-direction: column; gap: 10px; }
 .login-input { padding-left: 16px; font-size: 16px; /* 16px 미만이면 iOS가 확대함 */ }
 .login-btn { justify-content: center; padding: 13px; font-size: 15px; }
+.login-remember { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary, #aaa); cursor: pointer; }
+.login-remember input { width: 18px; height: 18px; accent-color: var(--accent, #8b5cf6); }
 .login-error { min-height: 18px; font-size: 13px; color: var(--pink); }
 
 .header-account { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }

@@ -526,6 +526,7 @@ function renderHeaderAccount() {
   initThemeToggle(document.getElementById('themeToggleBtn'));
   document.getElementById('logoutBtn')?.addEventListener('click', async () => {
     await fetch(`${API_BASE}/api/logout`, { method: 'POST' });
+    try { localStorage.removeItem('jandi.code'); } catch (e) {}  // 로그아웃하면 저장된 입장코드도 지움
     location.href = 'login.html';
   });
 }
