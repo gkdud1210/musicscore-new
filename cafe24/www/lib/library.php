@@ -654,7 +654,12 @@ function api_save_setlist(): array
     if (!$ids) throw new ApiError(400, '선택한 곡이 없습니다');
     if (count($ids) > 60) throw new ApiError(400, '한 번에 60곡까지 저장할 수 있어요');
     $title = mb_substr(trim((string)($b['title'] ?? '')) ?: '새 콘티', 0, 200);
-    $withAnnot = !empty($b['include_annotations']);
+    return summary_by_id(save_setlist($ids, $title, !empty($b['include_annotations'])));
+}
+
+/** 곡들의 악보 그림을 복사해서 새 콘티(from_setlist)로 저장 → 새 콘티 id. $date 를 주면 그 날짜로 */
+function save_setlist(array $ids, string $title, bool $withAnnot, ?string $date = null): int
+{
 
     // 곡마다 [원래 곡, 그림을 가져올 콘티, 시작쪽, 끝쪽]
     $plan = [];
@@ -679,7 +684,7 @@ function api_save_setlist(): array
     $newId = 0;
     try {
         q("INSERT INTO scores (title, original_filename, page_count, conti_date, confirmed, status, status_detail, from_setlist)
-           VALUES (?, ?, ?, ?, 1, 'ready', '', 1)", [$title, $title . '.pdf', $total, guess_date($title)]);
+           VALUES (?, ?, ?, ?, 1, 'ready', '', 1)", [$title, $title . '.pdf', $total, $date ?? guess_date($title)]);
         $newId = (int)$pdo->lastInsertId();
         $dir = score_dir($newId);
         $n = 0;
@@ -722,7 +727,100 @@ function api_save_setlist(): array
         if ($newId) rrmdir(DATA_DIR . "/scores/$newId");
         throw $e;
     }
-    return summary_by_id($newId);
+    return $newId;
+}
+
+/* ── 🧩 배합 콘티 ─────────────────────────────────────────────
+ * 콘티마다 분류(설교 전/후 × 느린/빠른)가 같은 곡끼리 묶어서 "배합 · 설교 전 느린 곡 — 원래 콘티" 로 따로 저장.
+ * 같은 분류에 같은 곡들(순서 상관없이)이면 하나만 남긴다. 원래 콘티는 그대로 둔다.
+ * 분류 안 된 곡은 건너뛴다 — 나중에 분류하고 다시 누르면 새로 생긴 배합만 더해진다. 2곡 이상인 묶음만.
+ */
+const COMBO_PREFIX = '배합 · ';
+
+function combo_label(string $section, string $tempo): string
+{
+    $parts = array_filter([['before' => '설교 전', 'after' => '설교 후'][$section] ?? '',
+                           ['slow' => '느린 곡', 'fast' => '빠른 곡'][$tempo] ?? '']);
+    return implode(' ', $parts);
+}
+
+function api_admin_combos(): array
+{
+    @set_time_limit(600);
+    $dry = !empty(body_json()['dry_run']);
+    $sheet = sheet_of_map();
+    $root = function (array $r) use ($sheet): int {
+        $id = (int)($r['use_song_id'] ?: $r['id']);
+        return (int)($sheet[$id] ?? $id);
+    };
+    $songsBy = [];
+    foreach (q_all('SELECT * FROM songs ORDER BY score_id, page_start') as $r) $songsBy[(int)$r['score_id']][] = $r;
+    $scores = q_all("SELECT id, title, conti_date, from_setlist FROM scores WHERE status = 'ready'
+                     ORDER BY COALESCE(conti_date, '0000-00-00') DESC, id DESC");
+    $keyOf = function (string $sec, string $tempo, array $rows) use ($root): ?string {
+        $roots = array_values(array_unique(array_map($root, $rows)));
+        if (count($roots) < 2) return null;
+        sort($roots);
+        return "$sec|$tempo|" . implode(',', $roots);
+    };
+
+    // 이미 있는 배합 콘티 (같은 것이 둘 이상이면 하나만 남기고 지움)
+    $have = [];
+    $remove = [];
+    foreach (array_reverse($scores) as $sc) {            // 오래된 것을 남긴다
+        if (!$sc['from_setlist'] || !str_starts_with((string)$sc['title'], COMBO_PREFIX)) continue;
+        $rows = $songsBy[(int)$sc['id']] ?? [];
+        if (!$rows) continue;
+        $k = $keyOf((string)$rows[0]['section'], (string)$rows[0]['tempo'], $rows);
+        if ($k === null) continue;
+        if (isset($have[$k])) $remove[] = ['id' => (int)$sc['id'], 'title' => $sc['title'], 'same_as' => $have[$k]['title']];
+        else $have[$k] = ['id' => (int)$sc['id'], 'title' => $sc['title']];
+    }
+
+    // 원래 콘티에서 새 배합 찾기 (최근 콘티 먼저 — 겹치면 최근 것이 남음)
+    $create = [];
+    $dups = [];
+    $skippedSongs = 0;
+    $unlabeledContis = 0;
+    foreach ($scores as $sc) {
+        if ($sc['from_setlist']) continue;
+        $rows = $songsBy[(int)$sc['id']] ?? [];
+        $groups = [];
+        foreach ($rows as $r) {
+            if ($r['section'] === '' && $r['tempo'] === '') { $skippedSongs++; continue; }
+            $groups[$r['section'] . '|' . $r['tempo']][] = $r;
+        }
+        if ($rows && !$groups) $unlabeledContis++;
+        foreach ($groups as $g => $grow) {
+            [$sec, $tempo] = explode('|', $g);
+            $k = $keyOf($sec, $tempo, $grow);
+            if ($k === null) continue;
+            $title = mb_substr(COMBO_PREFIX . combo_label($sec, $tempo) . ' — ' . trim((string)$sc['title']), 0, 200);
+            if (isset($have[$k])) { $dups[] = ['title' => $title, 'same_as' => $have[$k]['title']]; continue; }
+            $ids = [];
+            $seen = [];
+            foreach ($grow as $r) { $rt = $root($r); if (!isset($seen[$rt])) { $seen[$rt] = true; $ids[] = (int)$r['id']; } }
+            $have[$k] = ['id' => 0, 'title' => $title];
+            $create[] = ['title' => $title, 'ids' => $ids, 'date' => $sc['conti_date'] ?: null, 'songs' => count($ids)];
+        }
+    }
+
+    if (!$dry) {
+        foreach ($create as &$c) $c['id'] = save_setlist($c['ids'], $c['title'], false, $c['date']);
+        unset($c);
+        foreach ($remove as $rm) {
+            q('DELETE FROM scores WHERE id = ?', [$rm['id']]);
+            rrmdir(DATA_DIR . "/scores/{$rm['id']}");
+        }
+    }
+    return [
+        'dry_run' => $dry,
+        'created' => array_map(fn($c) => ['title' => $c['title'], 'songs' => $c['songs']], $create),
+        'duplicates_skipped' => $dups,
+        'removed' => $remove,
+        'unlabeled_songs' => $skippedSongs,
+        'unlabeled_contis' => $unlabeledContis,
+    ];
 }
 
 // ── 필기 ─────────────────────────────────────────────────────

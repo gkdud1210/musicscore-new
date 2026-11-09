@@ -2537,3 +2537,6 @@ html[data-theme="light"] .live-add-head { color: #444; }
   .live-top .top-fold { order: 2; }
   .live-top .live-top-btn:not(.top-fold) { order: 3; }
 }
+
+/* 🧩 배합 만들기 (관리자) */
+.combo-make-btn { margin-left: auto; }

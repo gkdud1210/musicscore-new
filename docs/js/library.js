@@ -28,6 +28,7 @@ const LibState = {
   selectedTempo: null,    // 'slow' | 'fast'
   contiCat: null,         // 콘티 목록 분류 필터: before | after | slow | fast
   contiMark: null,        // 콘티 목록 즐겨찾기 필터
+  contiKind: null,        // null(전체) | 'combo'(🧩 배합만) | 'full'(원래 콘티만)
   contiMarkOpen: null,    // 표시 고르기를 펼친 콘티 id
 };
 
@@ -710,8 +711,21 @@ const CONTI_CATS = [
   ['fast', '🐇 빠른', s => s.tempo === 'fast'],
 ];
 const contiCatTest = val => (CONTI_CATS.find(c => c[0] === val) || [])[2];
+/** 🧩 배합 콘티: 콘티에서 같은 분류(설교 전 느린 곡 등)끼리만 모아 따로 저장한 것 (서버 /api/admin/combos) */
+const COMBO_PREFIX = '배합 · ';
+const isCombo = c => String(c.title || '').startsWith(COMBO_PREFIX);
+const contiKindTest = c => !LibState.contiKind || (LibState.contiKind === 'combo') === isCombo(c);
 
-function renderContiFilters(base) {
+function renderContiFilters(all) {
+  const kindEl = document.getElementById('contiKindChips');
+  if (kindEl) {
+    const nCombo = all.filter(isCombo).length;
+    const k = (val, label, n) => `<button type="button" class="lib-chord-chip${LibState.contiKind === val ? ' active' : ''}" data-action="conti-kind" data-val="${val || ''}">${label}${n === null ? '' : ` <span class="lib-chip-count">${n}</span>`}</button>`;
+    kindEl.innerHTML = k(null, '전체', null) + k('combo', '🧩 배합', nCombo) + k('full', '📄 원래 콘티', all.length - nCombo)
+      + (AuthState.canEdit && AuthState.server === 'php'
+        ? '<button type="button" class="btn-sm admin-only combo-make-btn" data-action="make-combos" title="분류(설교 전/후·느린/빠른)가 같은 곡끼리 배합 콘티로 모아요. 겹치는 배합은 하나만 남겨요">🧩 배합 만들기</button>' : '');
+  }
+  const base = all.filter(contiKindTest);
   const catEl = document.getElementById('contiCatChips');
   const markEl = document.getElementById('contiMarkChips');
   if (!catEl || !markEl) return;
@@ -754,11 +768,12 @@ function renderContis() {
   }
   empty.classList.add('hidden');
   const test = contiCatTest(LibState.contiCat);
-  const shown = LibState.contis.filter(c =>
+  const shown = LibState.contis.filter(c => contiKindTest(c) &&
     (!test || c.songs.some(test)) && (!LibState.contiMark || marksOf(contiMarkKey(c.id)).includes(LibState.contiMark)));
-  const filtered = test || LibState.contiMark;
+  const filtered = test || LibState.contiMark || LibState.contiKind;
+  const kindWord = LibState.contiKind === 'combo' ? '배합' : '콘티';
   document.getElementById('contisCount').textContent = filtered
-    ? `${LibState.contiMark || ''} ${LibState.contiCat ? CONTI_CATS.find(x => x[0] === LibState.contiCat)[1] : ''} 콘티 ${shown.length}개`.trim()
+    ? `${LibState.contiMark || ''} ${LibState.contiCat ? CONTI_CATS.find(x => x[0] === LibState.contiCat)[1] : ''} ${kindWord} ${shown.length}개`.trim()
     : `콘티 ${shown.length}개`;
   const pendingCount = LibState.contis.filter(c => !c.confirmed).length;
   list.innerHTML = (pendingCount ? `
@@ -1302,6 +1317,11 @@ function initDelegatedActions() {
         LibState.contiCat = el.dataset.val && LibState.contiCat !== el.dataset.val ? el.dataset.val : null;
         renderContis();
         break;
+      case 'conti-kind':
+        LibState.contiKind = el.dataset.val && LibState.contiKind !== el.dataset.val ? el.dataset.val : null;
+        renderContis();
+        break;
+      case 'make-combos': makeCombos(); break;
       case 'conti-mark-filter':
         LibState.contiMark = el.dataset.mark && LibState.contiMark !== el.dataset.mark ? el.dataset.mark : null;
         renderContis();
@@ -1401,6 +1421,32 @@ function initDelegatedActions() {
 
 function toggleIn(set, v) {
   if (set.has(v)) set.delete(v); else set.add(v);
+}
+
+/** 🧩 배합 만들기: 먼저 무엇이 생길지 세어 보고, 확인하면 만든다 (원래 콘티는 그대로) */
+async function makeCombos() {
+  try {
+    showToast('배합을 찾는 중...', 'info', 2000);
+    const dry = await apiJson('/api/admin/combos', jsonBody('POST', { dry_run: true }));
+    const nNew = dry.created.length, nDup = dry.duplicates_skipped.length, nRm = dry.removed.length;
+    if (!nNew && !nRm) {
+      showToast(`새로 만들 배합이 없어요.${dry.unlabeled_songs ? ` 분류 안 된 곡 ${dry.unlabeled_songs}개는 콘티를 열어 설교 전/후·느린/빠른을 골라주세요.` : ''}`, 'info', 5000);
+      return;
+    }
+    const msg = [`🧩 배합 콘티 ${nNew}개를 만들까요?`,
+      '(설교 전 느린 곡, 설교 전 빠른 곡처럼 같은 분류끼리 모아요. 원래 콘티는 그대로 있어요.)',
+      nDup ? `· 같은 곡들로 겹치는 배합 ${nDup}개는 하나만 남겨요.` : '',
+      nRm ? `· 이미 있는 배합 중 겹치는 ${nRm}개는 지워요.` : '',
+      dry.unlabeled_songs ? `· 분류 안 된 곡 ${dry.unlabeled_songs}개는 건너뛰어요.` : ''].filter(Boolean).join('\n');
+    if (!confirm(msg)) return;
+    showToast('배합 콘티를 만드는 중... (조금 걸려요)', 'info', 8000);
+    const r = await apiJson('/api/admin/combos', jsonBody('POST', {}));
+    LibState.contiKind = 'combo';
+    await refreshAll();
+    showToast(`🧩 배합 ${r.created.length}개를 만들었어요${r.removed.length ? ` · 겹치는 배합 ${r.removed.length}개 지움` : ''}.`, 'success', 5000);
+  } catch (e) {
+    showToast('배합 만들기 실패: ' + e.message, 'error');
+  }
 }
 
 async function saveConti(id, form) {
