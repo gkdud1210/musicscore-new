@@ -2586,3 +2586,16 @@ html[data-theme="light"] .live-set-x { background: #d92d43; }
 .conti-song.photo-sel { outline: 2px solid var(--amber); outline-offset: 4px; border-radius: var(--radius-sm); }
 .photo-sel-add { display: none; align-items: center; gap: 10px; margin-top: 8px; }
 .conti-song.photo-sel .photo-sel-add { display: flex; }
+
+/* ✍️ 필기: 원하는 색 · 굵기 슬라이더 */
+.viewer-color-custom { position: relative; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; border: 2px solid var(--border); cursor: pointer; font-size: 14px; overflow: hidden; }
+.viewer-color-custom.active { border-color: var(--text-primary); box-shadow: 0 0 0 2px var(--accent); }
+.viewer-color-custom input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; border: 0; padding: 0; }
+.viewer-toolbar-group.hidden-colors { display: none; }
+.viewer-width-group { gap: 8px; }
+.viewer-width-preview { width: 30px; height: 30px; background: #fff; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--text-secondary); }
+.viewer-width-preview i { display: block; border-radius: 50%; }
+#widthRange { width: 130px; accent-color: var(--accent); }
+.viewer-width-val { min-width: 20px; font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) { #widthRange { width: 96px; } .viewer-toolbar { gap: 10px; } }

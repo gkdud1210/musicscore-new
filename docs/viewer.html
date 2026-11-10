@@ -20,7 +20,7 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="css/style.css?v=49" />
+  <link rel="stylesheet" href="css/style.css?v=50" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </head>
 <body class="viewer-body">
@@ -37,23 +37,22 @@
   <div class="viewer-toolbar">
     <div class="viewer-toolbar-group">
       <button class="viewer-tool-btn active" data-tool="pen" title="펜">✏️</button>
-      <button class="viewer-tool-btn" data-tool="highlighter" title="형광펜">🖊️</button>
-      <button class="viewer-tool-btn" data-tool="eraser" title="지우개">🧹</button>
+      <button class="viewer-tool-btn" data-tool="highlighter" title="형광펜 (반투명, 글씨 위에 칠해도 보여요)">🖍️</button>
+      <button class="viewer-tool-btn" data-tool="eraser" title="지우개 (닿은 선을 통째로 지워요)">🧹</button>
     </div>
-    <div class="viewer-toolbar-group">
-      <button class="viewer-color-swatch active" data-color="#ff3b30" style="background:#ff3b30" title="빨강"></button>
-      <button class="viewer-color-swatch" data-color="#111118" style="background:#111118" title="검정"></button>
-      <button class="viewer-color-swatch" data-color="#2f6fed" style="background:#2f6fed" title="파랑"></button>
-      <button class="viewer-color-swatch" data-color="#22c55e" style="background:#22c55e" title="초록"></button>
-      <button class="viewer-color-swatch" data-color="#f59e0b" style="background:#f59e0b" title="노랑"></button>
+    <div class="viewer-toolbar-group" id="colorGroup">
+      <!-- 색 버튼은 annotate.js 가 펜/형광펜에 맞게 채워요 -->
+      <label class="viewer-color-custom" title="원하는 색 고르기">🎨<input type="color" id="customColor" value="#ff3b30" aria-label="원하는 색 고르기" /></label>
     </div>
-    <div class="viewer-toolbar-group">
-      <button class="viewer-width-btn" data-width="thin" title="얇게">▪</button>
-      <button class="viewer-width-btn active" data-width="medium" title="보통">●</button>
-      <button class="viewer-width-btn" data-width="thick" title="굵게">⬤</button>
+    <div class="viewer-toolbar-group viewer-width-group">
+      <span class="viewer-width-preview" id="widthPreview" aria-hidden="true"><i></i></span>
+      <input type="range" id="widthRange" min="1" max="60" step="1" value="8" aria-label="굵기" title="굵기" />
+      <span class="viewer-width-val" id="widthVal"></span>
     </div>
     <div class="viewer-toolbar-group">
       <button class="viewer-tool-btn" id="undoBtn" title="실행취소">↩️</button>
+      <button class="viewer-tool-btn" id="redoBtn" title="다시 하기">↪️</button>
+      <button class="viewer-tool-btn" id="fingerBtn" title="손가락으로도 쓰기 (끄면 펜슬·마우스로만 써요)">☝️</button>
       <button class="viewer-tool-btn" id="panModeBtn" title="손가락으로 이동/확대 화면 이동">🖐️</button>
     </div>
     <div class="viewer-toolbar-group viewer-toolbar-zoom">
@@ -78,7 +77,7 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <script src="js/api.js?v=23"></script>
-  <script src="js/annotate.js?v=2"></script>
+  <script src="js/annotate.js?v=3"></script>
   <script src="js/viewer.js?v=2"></script>
 </body>
 </html>
