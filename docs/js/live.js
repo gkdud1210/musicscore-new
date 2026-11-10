@@ -134,6 +134,68 @@ async function sendLive(title, songIds, contiId = null) {
 }
 
 /** 라이브를 켠 사람이 나가기를 누르면: 나만 나가기 / 모두 끝내기 고르기 (잘못 눌러도 바로 끝나지 않게) */
+/* ── 📋 사진 붙여넣기: 복사한 사진을 붙여넣으면 바로 모두의 라이브 화면에 ─────────── */
+const clipImage = dt => [...(dt?.items || [])].find(it => it.kind === 'file' && /^image\//.test(it.type))?.getAsFile() || null;
+
+async function pasteLivePhoto(file) {
+  if (!file || LiveState.pasting) return;
+  if (typeof decodeImage !== 'function') { showToast('이 화면에서는 사진을 붙여넣을 수 없어요.', 'info'); return; }
+  const running = LiveState.live;
+  if (!running && !confirm('진행 중인 라이브가 없어요.\n이 사진으로 라이브를 시작할까요? 지금 접속한 모든 사람에게 알림이 가요.')) return;
+  LiveState.pasting = true;
+  showToast('📋 사진 올리는 중...', 'info', 2000);
+  try {
+    const src = await decodeImage(file);
+    const fd = new FormData();
+    fd.append('image', await imageToJpeg(src, PAGE_IMAGE_WIDTH), 'paste.jpg');
+    src.close?.();
+    const { live, started } = await apiJson('/api/live/photo', { method: 'POST', body: fd });
+    setLiveSeen(live.id);
+    lsSet(LIVE_LEFT_KEY, '');
+    setFocusSeen(live);
+    if (live.invite) { LiveState.sentInviteTs = live.invite.ts; setInviteSeen(live); }
+    LiveState.live = live;
+    renderLiveIndicator();
+    const V = LiveState.viewing;
+    if (LiveState.viewerOpen && V && !V.local && V.id === live.id) syncLiveViewerQuiet(live);
+    else {
+      if (typeof closeModal === 'function' && typeof LibState !== 'undefined' && LibState.modal) closeModal(true);
+      if (LiveState.viewerOpen) closeLiveViewer();
+      openLiveViewer();
+    }
+    jumpToFocus(live);
+    showToast(started ? '📡 붙여넣은 사진으로 라이브를 시작했어요.' : '📋 붙여넣은 사진을 모두의 화면에 띄웠어요.', 'success');
+  } catch (e) {
+    showToast('사진 띄우기 실패: ' + e.message, 'error');
+  } finally {
+    LiveState.pasting = false;
+  }
+}
+
+/** 📋 버튼 (휴대폰): 복사해 둔 사진을 읽고, 안 되면 사진 고르기 */
+async function pickLivePhoto() {
+  try {
+    if (navigator.clipboard?.read) {
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find(t => /^image\//.test(t));
+        if (type) { pasteLivePhoto(new File([await item.getType(type)], 'paste', { type })); return; }
+      }
+    }
+  } catch { /* 복사한 사진을 못 읽으면 고르기로 */ }
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = () => { if (input.files[0]) pasteLivePhoto(input.files[0]); };
+  input.click();
+}
+
+document.addEventListener('paste', e => {
+  const file = clipImage(e.clipboardData);
+  if (!file) return;   // 글자 붙여넣기는 그대로
+  e.preventDefault();
+  pasteLivePhoto(file);
+});
+
 function openLeaveChoice() {
   document.getElementById('liveLeaveSheet')?.remove();
   const el = document.createElement('div');
@@ -419,6 +481,7 @@ function renderLiveSet() {
       <span class="live-badge"><span class="live-dot"></span> ${V.local ? '보기' : 'LIVE'}</span>
       <div class="live-now" id="liveNow"></div>
       ${server ? '<button type="button" class="live-top-btn notify" data-live="notify" title="지금 보고 있는 콘티·곡으로 모두의 화면을 넘겨요">📣 알림주기</button>' : ''}
+      ${server ? '<button type="button" class="live-top-btn" data-live="paste" title="복사한 사진을 모두의 화면에 띄워요 (Ctrl/⌘+V 로 붙여넣어도 돼요)">📋 사진</button>' : ''}
       ${server ? '<button type="button" class="live-top-btn msg" data-live="msg" title="라이브 보는 모두의 악보 위에 메세지 띄우기">💬 메세지</button>' : ''}
       <button type="button" class="live-top-btn" data-live="scroll-mode" title="${liveVertical() ? '옆으로 넘기기로 바꾸기' : '밑으로 스크롤로 바꾸기'}">${liveVertical() ? '↕ 스크롤' : '↔ 넘기기'}</button>
       <button type="button" class="live-top-btn" data-live="fullscreen" title="전체 화면">⛶</button>
@@ -980,6 +1043,7 @@ document.addEventListener('click', e => {
     }
     case 'quick-save': saveQuickMessages(); break;
     case 'notify': notifyLive(); break;
+    case 'paste': pickLivePhoto(); break;
     case 'dismiss':
       if (LiveState.live) { setLiveSeen(LiveState.live.id); setFocusSeen(LiveState.live); setInviteSeen(LiveState.live); }
       hideLiveAlert();

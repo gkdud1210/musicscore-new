@@ -71,6 +71,8 @@ $ROUTES = [
     ['POST', '#^/live/focus$#', 'api_live_focus', 'member_ok'],
     ['POST', '#^/live/message$#', 'api_live_message', 'member_ok'],
     ['POST', '#^/live/invite$#', 'api_live_invite', 'member_ok'],
+    ['POST', '#^/live/photo$#', 'api_live_photo', 'member_ok'],
+    ['GET', '#^/live/photo/([a-z0-9-]+)\.jpg$#', 'api_live_photo_image', 'member'],
     ['GET', '#^/quick-messages$#', 'api_get_quick_messages', 'member'],
     ['PUT', '#^/quick-messages$#', 'api_put_quick_messages', 'admin'],
     ['GET', '#^/people$#', 'api_get_people', 'admin'],

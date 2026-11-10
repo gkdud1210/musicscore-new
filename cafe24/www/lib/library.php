@@ -1325,6 +1325,65 @@ function api_live_message(): array
     return ['live' => live_public($live)];
 }
 
+/** 📋 붙여넣은 사진: 라이브의 "붙여넣은 사진" 콘티에 한 장 더하고 모두의 화면을 그 사진으로. 라이브가 없으면 그 사진으로 시작 */
+const LIVE_PASTE_KEY = 'paste';
+
+function live_photo_dir(): string
+{
+    $d = DATA_DIR . '/live';
+    @mkdir($d, 0755, true);
+    // 지난 라이브 사진은 정리 (하루 넘은 것)
+    foreach (glob("$d/*.jpg") ?: [] as $f) if (filemtime($f) < time() - 86400) @unlink($f);
+    return $d;
+}
+
+function api_live_photo(): array
+{
+    $name = date('ymdHis') . '-' . bin2hex(random_bytes(4));
+    $path = live_photo_dir() . "/$name.jpg";
+    save_uploaded_jpeg('image', $path, 8 * 1024 * 1024);
+    $song = ['id' => 0, 'title' => '붙여넣은 사진 ' . date('H:i'), 'key' => '',
+             'image_urls' => ["/api/live/photo/$name.jpg"]];
+    $token = null;
+    $started = false;
+    try {
+        $live = live_update(function (?array $live) use ($song, &$token, &$started) {
+            $now = microtime(true);
+            if (!$live) {
+                if (current_user() === null && !can_edit(current_role())) throw new ApiError(403, '입장한 사람만 라이브를 시작할 수 있어요');
+                $started = true;
+                $token = bin2hex(random_bytes(16));
+                $live = ['id' => (int)($now * 1000), 'title' => '📋 붙여넣은 사진', 'date' => null, 'sets' => [],
+                         'owner' => hash('sha256', $token), 'started_ts' => (int)$now, 'started_at' => date('H:i', (int)$now), 'focus' => null];
+            } else {
+                $live = live_require_editor($live);
+            }
+            $i = array_search(LIVE_PASTE_KEY, array_column($live['sets'], 'key'), true);
+            if ($i === false) {
+                $live['sets'][] = ['key' => LIVE_PASTE_KEY, 'title' => '📋 붙여넣은 사진', 'conti_id' => null, 'songs' => []];
+                $i = count($live['sets']) - 1;
+            }
+            if (count($live['sets'][$i]['songs']) >= 60) array_shift($live['sets'][$i]['songs']);
+            $live['sets'][$i]['songs'][] = $song;
+            $live['focus'] = ['key' => LIVE_PASTE_KEY, 'song' => count($live['sets'][$i]['songs']) - 1,
+                              'title' => '📋 붙여넣은 사진', 'ts' => (int)($now * 1000)];
+            if ($started) $live['invite'] = live_invite_now();
+            return $live;
+        });
+    } catch (Throwable $e) {
+        @unlink($path);
+        throw $e;
+    }
+    if ($token) {
+        setcookie(LIVE_COOKIE, $token, ['expires' => time() + LIVE_TTL_SECONDS + 3600, 'path' => '/',
+                                        'httponly' => true, 'samesite' => 'Lax', 'secure' => is_https()]);
+        $_COOKIE[LIVE_COOKIE] = $token;
+    }
+    return ['live' => live_public($live), 'started' => $started];
+}
+
+function api_live_photo_image(string $name): void { send_image(DATA_DIR . "/live/$name.jpg"); }
+
 const QUICK_MESSAGES_DEFAULT = ['드럼 좀 천천히 부탁해요 🥁', '조금 더 고조 업업 🔥', '템포 조금 빠르게 ⏩', '한 번 더 반복 🔁',
                                 '후렴으로 가요', '조용히 마무리해요 🙏'];
 
