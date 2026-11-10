@@ -811,6 +811,7 @@ async function openContiModal(id) {
   // 곡 화면에서 콘티로 들어왔으면 "뒤로" 버튼으로 곡 화면에 돌아갈 수 있게 기억
   const back = LibState.modal?.type === 'song' ? LibState.modal : null;
   LibState.modal = { type: 'conti', id, back };
+  LibState.photoSel = null;
   showModal();
   document.getElementById('libModalBody').innerHTML = '<p class="lib-modal-sub">불러오는 중...</p>';
   await reloadContiModal();
@@ -925,7 +926,7 @@ function renderContiModal(conti, songs) {
       const isFirst = songIndex++ === 0;
       const suspicious = !s.chords.length && !s.key;
       return `
-        <div class="conti-song${suspicious ? ' suspicious' : ''}">
+        <div class="conti-song${suspicious ? ' suspicious' : ''}" data-song-id="${s.id}">
           <form class="conti-song-head" data-action-submit="save-song" data-id="${s.id}">
             <span class="conti-song-no">${songIndex}</span>
             <input type="text" name="title" class="lib-edit-title-input" value="${escapeHtml(s.title)}" />
@@ -933,6 +934,7 @@ function renderContiModal(conti, songs) {
             ${isFirst ? '' : `<button type="button" class="btn-sm" data-action="merge-prev" data-id="${s.id}" title="앞 곡의 다음 페이지로 합치기">⤴ 앞 곡과 합치기</button>`}
             <button type="button" class="btn-sm" data-action="delete-song" data-id="${s.id}">곡에서 빼기</button>
             ${addButton(s)}
+            ${isPhpServer() && !s.use_song_id ? `<button type="button" class="btn-sm photo-sel-btn" data-action="photo-select" data-id="${s.id}" title="이 곡을 고르고 📷 사진 추가를 누르면 이 곡 바로 뒤에 들어가요">☐ 선택</button>` : ''}
             <div class="song-cats">
               <span class="song-cats-label">분류</span>
               ${choiceChip('section', 'before', '설교 전', s.section)}${choiceChip('section', 'after', '설교 후', s.section)}
@@ -960,13 +962,14 @@ function renderContiModal(conti, songs) {
                 </figcaption>
               </figure>`;
             }).join('')}
-            ${isPhpServer() && !s.use_song_id ? `<button type="button" class="song-page photo-add-tile" data-action="photo-add" data-score="${conti.id}" data-at="${s.page_end + 1}" title="이 곡 바로 뒤에 사진을 넣어요 (여러 장 가능)">＋<span>사진 추가</span></button>` : ''}
           </div>
+          ${isPhpServer() && !s.use_song_id ? `<div class="photo-sel-add"><button type="button" class="btn-sm" data-action="photo-add" data-score="${conti.id}" data-at="${s.page_end + 1}">📷 이 곡 뒤에 사진 추가</button>
+            <button type="button" class="btn-link" data-action="photo-select" data-id="${s.id}">선택 풀기</button></div>` : ''}
         </div>`;
     }).join('')}
     </div>
-    ${isPhpServer() ? `<div class="photo-add-row"><button type="button" class="btn-sm" data-action="photo-add" data-score="${conti.id}" data-at="${conti.page_count + 1}">📷 맨 뒤에 사진 추가</button>
-      <span class="ai-row-sub">사진은 여러 장 한 번에 고를 수 있어요. 넣은 사진은 AI가 읽어서 새 곡으로 만들어요.</span></div>` : ''}
+    ${isPhpServer() ? `<div class="photo-add-row" data-score="${conti.id}" data-end="${conti.page_count + 1}"><button type="button" class="btn-sm" id="photoAddMain" data-action="photo-add" data-score="${conti.id}" data-at="${conti.page_count + 1}">📷 맨 뒤에 사진 추가</button>
+      <span class="ai-row-sub" id="photoAddSub">곡의 <b>☐ 선택</b>을 누르고 사진을 추가하면 그 곡 바로 뒤에 들어가요. 여러 장 한 번에 고를 수 있고, 넣은 사진은 AI가 읽어서 새 곡으로 만들어요.</span></div>` : ''}
     ${pending ? `<div class="review-footer">${confirmBtn}</div>` : ''}
     <div class="save-all-bar hidden" id="saveAllBar">
       <span id="saveAllCount"></span>
@@ -974,7 +977,29 @@ function renderContiModal(conti, songs) {
       <button type="button" class="btn-primary" data-action="save-all">💾 전체 저장</button>
     </div>`;
   applyContiView(conti.id);
+  applyPhotoSel();
   updateSaveAllBar();
+}
+
+/** 📷 사진 넣을 자리: 고른 곡(LibState.photoSel = 곡 id) 바로 뒤, 안 골랐으면 맨 뒤 */
+function applyPhotoSel() {
+  const cards = document.querySelectorAll('.conti-song[data-song-id]');
+  let sel = null;
+  cards.forEach(card => {
+    const on = LibState.photoSel != null && Number(card.dataset.songId) === LibState.photoSel;
+    card.classList.toggle('photo-sel', on);
+    const b = card.querySelector('.photo-sel-btn');
+    if (b) { b.textContent = on ? '✓ 선택됨' : '☐ 선택'; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); }
+    if (on) sel = card;
+  });
+  if (!sel) LibState.photoSel = null;   // 지워진 곡이면 선택도 풀기
+  const main = document.getElementById('photoAddMain');
+  const row = main?.closest('.photo-add-row');
+  if (!main || !row) return;
+  const add = sel?.querySelector('.photo-sel-add [data-action="photo-add"]');
+  const title = sel?.querySelector('input[name="title"]')?.value.trim() || '고른 곡';
+  main.dataset.at = add ? add.dataset.at : row.dataset.end;
+  main.textContent = add ? `📷 "${title}" 뒤에 사진 추가` : '📷 맨 뒤에 사진 추가';
 }
 
 /** 사진 한 장의 🔄 바꾸기 / ❌ 지우기 (카페24 서버에서만) */
@@ -1406,6 +1431,12 @@ function initDelegatedActions() {
       case 'photo-replace': photoEdit('replace', Number(el.dataset.score), Number(el.dataset.page)); break;
       case 'photo-delete': photoEdit('delete', Number(el.dataset.score), Number(el.dataset.page)); break;
       case 'photo-add': photoEdit('add', Number(el.dataset.score), Number(el.dataset.at)); break;
+      case 'photo-select': {
+        const sid = Number(el.dataset.id);
+        LibState.photoSel = LibState.photoSel === sid ? null : sid;
+        applyPhotoSel();
+        break;
+      }
       case 'confirm-conti':
         el.disabled = true;
         if (await saveAllConti({ reload: false, quiet: true })) confirmConti(id);

@@ -2580,3 +2580,9 @@ html[data-theme="light"] .live-add-head { color: #444; }
 .live-set-x { flex-shrink: 0; background: #b42a3c; color: #fff; border: 1px solid #e5384f; border-left: 1px solid rgba(255,255,255,.35);
   border-radius: 0 10px 10px 0; padding: 0 11px; font-size: 13px; font-weight: 800; cursor: pointer; }
 html[data-theme="light"] .live-set-x { background: #d92d43; }
+
+/* 콘티 사진 추가: 곡을 ☐ 선택하면 그 곡 뒤에 */
+.photo-sel-btn.on { background: var(--amber); border-color: var(--amber); color: #111; font-weight: 700; }
+.conti-song.photo-sel { outline: 2px solid var(--amber); outline-offset: 4px; border-radius: var(--radius-sm); }
+.photo-sel-add { display: none; align-items: center; gap: 10px; margin-top: 8px; }
+.conti-song.photo-sel .photo-sel-add { display: flex; }
