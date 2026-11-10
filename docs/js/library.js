@@ -423,6 +423,45 @@ function dupSheetBuckets(versions) {
   return byKey;   // 키 → (악보 번호 → 그 악보를 쓰는 곡들)
 }
 
+/** 한 키의 악보들 순서: 많이 쓰인 악보(남긴 악보) → 최근 콘티 순. 맨 앞이 "남길 악보" */
+const sortSheets = sheetMap => [...sheetMap.values()].sort((a, b) =>
+  b.length - a.length || String(b[0].conti_date || '').localeCompare(String(a[0].conti_date || '')));
+
+/** 남길 악보를 골라야 하는 것들: [{ g, key, keepId, ids }] */
+function dupSheetJobs(groups) {
+  const jobs = [];
+  for (const g of groups) {
+    for (const [k, sheets] of dupSheetBuckets(g.versions).entries()) {
+      if (!k || sheets.size < 2) continue;
+      const sorted = sortSheets(sheets);
+      jobs.push({ g, key: k, keepId: sorted[0][0].id, ids: sorted.flat().map(v => v.id) });
+    }
+  }
+  return jobs;
+}
+
+/** ⭐ 한 번에: 곡마다 맨 앞 악보(가장 많이 쓰인 것)를 남긴다 */
+async function keepAllDupSheets(btn) {
+  const jobs = dupSheetJobs(LibState.groups || []);
+  if (!jobs.length) return;
+  if (!confirm(`제목·키가 같은데 악보가 여러 장인 ${jobs.length}곳을 한 번에 정리할까요?\n\n곡마다 가장 많이 쓰인(같으면 최근) 악보 하나만 남기고, 나머지 악보가 들어있던 콘티에서도 남긴 악보로 보여요.\n원본은 지우지 않아서 콘티 화면에서 "원래 악보로" 되돌릴 수 있어요.`)) return;
+  if (btn) btn.disabled = true;
+  let ok = 0;
+  const fail = [];
+  for (const [i, j] of jobs.entries()) {
+    showToast(`⭐ 악보 정리 중 ${i + 1}/${jobs.length} · ${j.g.main.title} (${j.key})`, 'info', 2000);
+    try {
+      await apiJson(`/api/songs/${j.keepId}/keep`, jsonBody('POST', { song_ids: j.ids.filter(x => x !== j.keepId) }));
+      ok++;
+    } catch (e) {
+      fail.push(`${j.g.main.title} (${j.key})`);
+    }
+  }
+  showToast(fail.length ? `${ok}곳 정리, ${fail.length}곳 실패: ${fail.join(', ')}` : `악보 ${ok}곳을 하나씩만 남겼어요.`, fail.length ? 'error' : 'success', 6000);
+  LibState.modalDirty = true;
+  await refreshAll();
+}
+
 function renderDupSheetBanner(groups) {
   const box = document.getElementById('dupSheetBanner');
   if (!box) return;
@@ -430,7 +469,8 @@ function renderDupSheetBanner(groups) {
     [...dupSheetBuckets(g.versions).entries()].some(([k, sheets]) => k && sheets.size > 1)) : [];
   box.innerHTML = dups.length ? `
     <div class="dup-sheet-banner">
-      <p>🗂 제목·키가 같은데 악보가 여러 장인 곡이 <b>${dups.length}곡</b> 있어요. 눌러서 남길 악보 하나를 골라주세요.</p>
+      <p>🗂 제목·키가 같은데 악보가 여러 장인 곡이 <b>${dups.length}곡</b> 있어요. 눌러서 남길 악보 하나를 골라주세요.
+        <button type="button" class="btn-primary btn-compact" data-action="keep-all-sheets" title="곡마다 가장 많이 쓰인(같으면 최근) 악보 하나만 남겨요">⭐ 한 번에 하나씩 남기기</button></p>
       <div class="dup-sheet-chips">${dups.map(g => `<button type="button" class="btn-sm" data-action="open-song" data-group="${escapeHtml(g.key)}">${escapeHtml(g.main.title)}</button>`).join('')}</div>
     </div>` : '';
 }
@@ -563,8 +603,7 @@ function renderSheets(versions) {
   let shown = 0;
   const html = keys.map(k => {
     // 많이 쓰인 악보(남긴 악보)를 맨 앞에
-    const sheets = [...buckets.get(k).values()].sort((a, b) =>
-      b.length - a.length || String(b[0].conti_date || '').localeCompare(String(a[0].conti_date || '')));
+    const sheets = sortSheets(buckets.get(k));
     shown++;
     if (sheets.length === 1 || !k) {
       shown += sheets.length - 1;
@@ -1412,6 +1451,7 @@ function initDelegatedActions() {
         break;
       }
       case 'set-group-tempo': setGroupTempo(el.dataset.tempo); break;
+      case 'keep-all-sheets': keepAllDupSheets(el); break;
       case 'keep-sheet': keepSheet(id, el.dataset.ids.split(',').map(Number), el.dataset.key); break;
       case 'restore-sheet':
         if (await saveAllConti({ reload: false, quiet: true })) restoreSheet(id);
