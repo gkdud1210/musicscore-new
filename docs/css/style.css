@@ -2403,6 +2403,10 @@ html[data-theme="light"] .live-to-chip.on { color: #fff; border-color: #3b82f6; 
 html[data-theme="light"] .live-to-chip.all:not(.on) { color: #333; }
 html[data-theme="light"] .live-to-sum { color: #555; }
 .live-msg-form .live-top-btn { flex: none; }
+.live-to-toggle { background: transparent; color: #93c5fd; border: 1px solid rgba(59,130,246,.55); border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: var(--font-main); }
+.live-to-toggle.open { background: rgba(59,130,246,.2); }
+.live-to-list { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; flex-basis: 100%; margin-top: 4px; }
+html[data-theme="light"] .live-to-toggle { color: #1d4ed8; }
 
 .ws-live-end { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0 4px;
   padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(229,56,79,.45); background: rgba(229,56,79,.08); font-size: 13px; }

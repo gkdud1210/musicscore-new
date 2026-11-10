@@ -261,7 +261,7 @@ function sendLiveFromConti() {
   if (!m || m.type !== 'conti' || !m.songs) return;
   const songs = [...m.songs].sort((a, b) => a.page_start - b.page_start);
   const conti = LibState.contis.find(c => c.id === m.id);
-  sendLive(conti?.title || songs[0]?.conti_title || '오늘 콘티', songs.map(s => s.id), m.id);
+  sendLive(conti?.songs?.length ? contiDisplayName(conti) : conti?.title || songs[0]?.conti_title || '오늘 콘티', songs.map(s => s.id), m.id);
 }
 
 /** 새 콘티 트레이의 NOW 버튼: 담은 순서대로 보낸다 */
@@ -655,6 +655,13 @@ function toggleLiveFullscreen() {
   else (v.requestFullscreen || v.webkitRequestFullscreen)?.call(v);
 }
 
+/** 콘티 짜기와 같은 이름: 첫 곡 제목 (코드) · 곡 수 · 날짜 (builder.js 의 cbName) */
+function contiDisplayName(c) {
+  if (typeof cbName === 'function') return cbName(c);
+  const d = c.conti_date ? `${c.conti_date} ` : '';
+  return `${d}${c.title} · ${c.songs.length}곡`;
+}
+
 /* ── 라이브 화면에서 콘티 더하기: 관리자는 모두에게(함께 고치기), 팀원은 내 화면에만 ───── */
 /** 콘티 이름·날짜·곡 제목으로 찾기. 곡 제목으로 찾으면 그 곡이 든 콘티들과 곡 이름을 같이 보여준다 */
 function filterContisByQuery(contis, q) {
@@ -707,8 +714,8 @@ async function openLiveAdd() {
     const has = inLive.has(c.id);
     const m = markOfConti(c);
     return `<div class="live-add-row">
-      <button type="button" class="live-add-item" data-live="add-conti" data-id="${c.id}" ${has ? 'disabled' : ''}>
-        ${m.length ? `<b class="live-add-marks">${m.join('')}</b> ` : ''}${c.conti_date ? `<span>${escapeHtml(c.conti_date)}</span> ` : ''}${escapeHtml(c.title)} <small>${has ? '✓ 이미 있음' : `${c.songs.length}곡`}</small>
+      <button type="button" class="live-add-item" data-live="add-conti" data-id="${c.id}" title="${escapeHtml(c.title)}" ${has ? 'disabled' : ''}>
+        ${m.length ? `<b class="live-add-marks">${m.join('')}</b> ` : ''}${escapeHtml(contiDisplayName(c))}${has ? ' <small>✓ 이미 있음</small>' : ''}
         ${hits.length ? `<em class="live-add-hits">🎵 ${hits.map(escapeHtml).join(', ')}</em>` : ''}</button>
       ${notifyBtn(`data-live="add-conti-notify" data-id="${c.id}"`)}
     </div>`;
@@ -942,13 +949,17 @@ function recipientChips() {
   const def = defaultRecipients();
   const isDefault = !all && def.size === to.size && [...def].every(k => to.has(k));
   const left = list.filter(x => !to.has(x.key)).map(x => x.name);
-  return `<span class="live-to-label">받는 사람</span>
-    <button type="button" class="live-to-chip all${all ? ' on' : ''}" data-live="to-all">${all ? '✓ ' : ''}전체</button>
-    ${list.map(x => `<button type="button" class="live-to-chip${to.has(x.key) ? ' on' : ''}" data-live="to-toggle" data-key="${escapeHtml(x.key)}"
-      aria-pressed="${to.has(x.key)}">${to.has(x.key) ? '✓ ' : ''}${escapeHtml(x.name)}</button>`).join('')}
+  const open = !!LiveState.msgToOpen;
+  // 평소엔 "받는 사람" 버튼 + 요약만, 누르면 사람 칩이 펼쳐진다
+  return `<button type="button" class="live-to-toggle${open ? ' open' : ''}" data-live="to-open" aria-expanded="${open}">👥 받는 사람 ${open ? '▴' : '▾'}</button>
     <span class="live-to-sum">${all ? '모두에게 보여요' : !to.size ? '받는 사람을 골라주세요'
       : left.length <= 2 ? `${escapeHtml(left.join(', '))} 빼고 보여요${isDefault ? ' (기본)' : ''}` : `${to.size}명에게만 보여요`}</span>
-    ${!isDefault && def.size !== list.length ? '<button type="button" class="live-to-reset" data-live="to-default">↺ 기본으로</button>' : ''}`;
+    ${open ? `<div class="live-to-list">
+      <button type="button" class="live-to-chip all${all ? ' on' : ''}" data-live="to-all">${all ? '✓ ' : ''}전체</button>
+      ${list.map(x => `<button type="button" class="live-to-chip${to.has(x.key) ? ' on' : ''}" data-live="to-toggle" data-key="${escapeHtml(x.key)}"
+        aria-pressed="${to.has(x.key)}">${to.has(x.key) ? '✓ ' : ''}${escapeHtml(x.name)}</button>`).join('')}
+      ${!isDefault && def.size !== list.length ? '<button type="button" class="live-to-reset" data-live="to-default">↺ 기본으로</button>' : ''}
+    </div>` : ''}`;
 }
 
 function toggleRecipient(key, all = false) {
@@ -1023,7 +1034,8 @@ document.addEventListener('click', e => {
       break;
     case 'leave-only': document.getElementById('liveLeaveSheet')?.remove(); leaveLive(); break;
     case 'leave-cancel': document.getElementById('liveLeaveSheet')?.remove(); break;
-    case 'msg': openLiveMsgPanel(); break;
+    case 'msg': LiveState.msgToOpen = false; openLiveMsgPanel(); break;
+    case 'to-open': LiveState.msgToOpen = !LiveState.msgToOpen; document.getElementById('liveTo').innerHTML = recipientChips(); break;
     case 'msg-panel': document.getElementById('liveMsgPanel')?.classList.add('hidden'); openLiveMsgPanel(); break;
     case 'send-msg': sendLiveMessage(el.dataset.text); break;
     case 'add-word': addMsgWord(el.dataset.text); break;
@@ -1060,7 +1072,7 @@ document.addEventListener('click', e => {
     case 'add-conti-notify': {
       const c = (typeof LibState !== 'undefined' && LibState.contis || []).find(x => x.id === Number(el.dataset.id));
       const notify = el.dataset.live === 'add-conti-notify';
-      liveSetFromConti(Number(el.dataset.id), c?.title || el.closest('.live-add-row')?.querySelector('.live-add-item')?.textContent.trim() || '콘티')
+      liveSetFromConti(Number(el.dataset.id), c?.songs?.length ? contiDisplayName(c) : c?.title || el.closest('.live-add-row')?.querySelector('.live-add-item')?.textContent.trim() || '콘티')
         .then(set => addLiveSet(set, notify)).catch(err => showToast('불러오기 실패: ' + err.message, 'error'));
       break;
     }
