@@ -708,6 +708,7 @@ async function openLiveAdd() {
   box.innerHTML = `
     <p class="live-add-note">${shared ? '👥 더한 콘티는 <b>모두의 화면</b>에 같이 생겨요. <b>📣 띄우기</b>를 누르면 더하면서 모두의 화면을 그 콘티로 넘겨요.' : '내 화면에만 더해져요.'}</p>
     <input type="search" class="live-add-search" id="liveAddSearch" placeholder="콘티 이름·날짜·찬양 제목으로 찾기" />
+    <div class="live-add-tempo" id="liveAddTempo"></div>
     <div class="live-add-list" id="liveAddList"></div>`;
   const notifyBtn = (attrs) => shared ? `<button type="button" class="live-add-notify" ${attrs} title="더하고 모두의 화면을 여기로 넘겨요">📣 띄우기</button>` : '';
   const contiRow = ({ c, hits }) => {
@@ -725,21 +726,39 @@ async function openLiveAdd() {
         <b class="live-add-marks">${m.join('')}</b> 🎵 ${escapeHtml(song.title)}${song.key ? ` <small>${escapeHtml(song.key)}</small>` : ''}</button>
       ${notifyBtn(`data-live="add-song-notify" data-id="${song.id}" data-title="${escapeHtml(song.title)}"`)}
     </div>`;
+  // 🐢 느린 곡 / 🐇 빠른 곡 고르기 (라이브러리 콘티 목록과 같은 기준: 그 빠르기 곡이 든 콘티)
+  let tempo = '';
+  const hasTempo = c => !tempo || c.songs.some(s => s.tempo === tempo);
+  const TEMPOS = [['', '전체'], ['slow', '🐢 느린 곡'], ['fast', '🐇 빠른 곡']];
+  const drawTempo = () => {
+    document.getElementById('liveAddTempo').innerHTML = TEMPOS.map(([t, label]) => {
+      const n = t ? contis.filter(c => c.songs.some(s => s.tempo === t)).length : null;
+      return `<button type="button" class="live-to-chip all${tempo === t ? ' on' : ''}" data-tempo="${t}" aria-pressed="${tempo === t}">${label}${n === null ? '' : ` <small>${n}</small>`}</button>`;
+    }).join('');
+  };
   const draw = q => {
-    const rows = filterContisByQuery(contis, q);
-    const favContis = q ? [] : contis.filter(c => markOfConti(c).length).map(c => ({ c, hits: [] }));
+    const rows = filterContisByQuery(contis, q).filter(({ c }) => hasTempo(c));
+    const favContis = q ? [] : contis.filter(c => markOfConti(c).length && hasTempo(c)).map(c => ({ c, hits: [] }));
     const nq = normQ(q);
-    const favS = q ? favSongs.filter(f => normQ(f.song.title).includes(nq)) : favSongs;
+    const favS = (q ? favSongs.filter(f => normQ(f.song.title).includes(nq)) : favSongs).filter(f => !tempo || f.song.tempo === tempo);
     document.getElementById('liveAddList').innerHTML = `
       ${!q && setlist.length ? `<button type="button" class="live-add-item" data-live="add-setlist">🎼 담은 곡 (${setlist.length}곡)</button>` : ''}
       ${favContis.length ? `<p class="live-add-head">⭐ 즐겨찾기 콘티</p>${favContis.map(contiRow).join('')}` : ''}
       ${favS.length ? `<p class="live-add-head">⭐ 즐겨찾기 곡</p>${favS.slice(0, 60).map(songRow).join('')}` : ''}
       ${!q && (favContis.length || favSongs.length) ? '<p class="live-add-head">📁 모든 콘티</p>' : ''}
       ${rows.slice(0, 80).map(contiRow).join('')
-        || '<p class="live-add-empty">찾는 콘티가 없어요.</p>'}`;
+        || `<p class="live-add-empty">${tempo ? `${tempo === 'slow' ? '🐢 느린' : '🐇 빠른'} 곡이 든 콘티가 없어요.` : '찾는 콘티가 없어요.'}</p>`}`;
   };
+  drawTempo();
   draw('');
   const input = document.getElementById('liveAddSearch');
+  document.getElementById('liveAddTempo').addEventListener('click', e => {
+    const b = e.target.closest('[data-tempo]');
+    if (!b) return;
+    tempo = b.dataset.tempo === tempo ? '' : b.dataset.tempo;
+    drawTempo();
+    draw(input.value.trim());
+  });
   input.addEventListener('input', e => draw(e.target.value.trim()));
   input.focus({ preventScroll: true });
 }

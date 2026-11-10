@@ -2569,3 +2569,7 @@ html[data-theme="light"] .live-add-head { color: #444; }
 .cb-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
 .cb-total { font-weight: 700; margin-right: auto; }
 @media (max-width: 520px) { .cb-total { width: 100%; } }
+
+/* 라이브 콘티 더하기: 🐢 느린 곡 / 🐇 빠른 곡 */
+.live-add-tempo { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 8px; }
+.live-add-tempo .live-to-chip small { opacity: .75; font-weight: 400; }
