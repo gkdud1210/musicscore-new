@@ -722,6 +722,27 @@ const CONTI_CAT_DIM = v => (v === 'before' || v === 'after' ? ['before', 'after'
 const isCombo = c => !!c.combo;
 const contiKindTest = c => !LibState.contiKind || (LibState.contiKind === 'combo') === isCombo(c);
 
+/** 제목에서 날짜 말 빼기: "11월6일 금요일", "11월 6일(금)", "2026-11-06", "11/6", "금요일" (날짜는 📅 줄에 따로 나옴) */
+function stripTitleDate(t) {
+  return String(t || '')
+    .replace(/(\d{2,4}\s*년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일\s*(\(\s*[월화수목금토일]\s*\)|[월화수목금토일]요일)?/g, ' ')
+    .replace(/\d{4}[-./]\d{1,2}[-./]\d{1,2}|\b\d{1,2}\/\d{1,2}\b/g, ' ')
+    .replace(/[월화수목금토일]요일/g, ' ')
+    .replace(/\s*[—–-]\s*$|^\s*[—–-]\s*/g, '').replace(/\s*[—–-]\s*[—–-]\s*/g, ' — ')
+    .replace(/[()\s·,]+$/g, '').replace(/^[()\s·,]+/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/** 콘티 목록 제목: [설교 전 느린 곡 / 남은 이름] · 첫 곡 (코드 흐름) — 예) "설교 전 느린 곡 · 은혜 아니면 (G → A)" */
+function contiListName(c) {
+  const name = c.conti_date ? stripTitleDate(c.title) : String(c.title || '').trim();   // 📅 날짜가 없으면 제목의 날짜는 그대로
+  const songs = c.songs || [];
+  if (!songs.length) return name || c.title || '제목 없는 콘티';
+  const keys = [];
+  songs.forEach(x => { if (x.key && keys[keys.length - 1] !== x.key) keys.push(x.key); });
+  const first = `${songs[0].title || '제목 없음'}${keys.length ? ` (${keys.join(' → ')})` : ''}`;
+  return name && name !== songs[0].title ? `${name} · ${first}` : first;
+}
+
 function renderContiFilters(all) {
   const kindEl = document.getElementById('contiKindChips');
   if (kindEl) {
@@ -800,7 +821,7 @@ function renderContis() {
     <div class="conti-row${c.confirmed ? '' : ' pending'}">
       <div class="conti-thumb lib-card-thumb" data-action="open-conti" data-id="${c.id}">${img(c.thumbnail_url, c.title)}</div>
       <div class="conti-info">
-        <p class="conti-title" data-action="open-conti" data-id="${c.id}">${marks.length ? `<span class="card-marks">${marks.join('')}</span> ` : ''}${(c.overlaps || []).some(o => o.kind !== 'partial') ? '<span class="pending-badge dup">겹치는 콘티</span> ' : ''}${c.status === 'processing' ? `<span class="pending-badge processing">분석 중 ${escapeHtml(c.status_detail || '')}</span> ` : c.confirmed ? '' : '<span class="pending-badge">확인 필요</span> '}${escapeHtml(c.title)}</p>
+        <p class="conti-title" data-action="open-conti" data-id="${c.id}">${marks.length ? `<span class="card-marks">${marks.join('')}</span> ` : ''}${(c.overlaps || []).some(o => o.kind !== 'partial') ? '<span class="pending-badge dup">겹치는 콘티</span> ' : ''}${c.status === 'processing' ? `<span class="pending-badge processing">분석 중 ${escapeHtml(c.status_detail || '')}</span> ` : c.confirmed ? '' : '<span class="pending-badge">확인 필요</span> '}<span title="${escapeHtml(c.title)}">${escapeHtml(contiListName(c))}</span></p>
         <p class="song-meta">${c.conti_date ? `📅 ${escapeHtml(c.conti_date)} · ` : ''}${c.songs.length}곡 · ${c.page_count}페이지</p>
         <div class="conti-songs">
           ${c.songs.map((s, i) => `<span class="conti-song-chip${s.section ? ' sec-' + s.section : ''}${test ? (test(s) ? ' hit' : ' dim') : ''}" title="${[s.section && SECTION_LABEL[s.section], s.tempo && TEMPO_LABEL[s.tempo]].filter(Boolean).join(' · ')}">${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}${s.tempo === 'slow' ? ' 🐢' : s.tempo === 'fast' ? ' 🐇' : ''}</span>`).join('')
