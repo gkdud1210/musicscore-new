@@ -26,7 +26,7 @@ const LibState = {
   selectedMark: null,     // 즐겨찾기 필터
   selectedSection: null,  // 'before'(설교 전) | 'after'(설교 후)
   selectedTempo: null,    // 'slow' | 'fast'
-  contiCat: null,         // 콘티 목록 분류 필터: before | after | slow | fast
+  contiCats: new Set(),   // 콘티 목록 분류 필터 (여러 개): before | after | slow | fast
   contiMark: null,        // 콘티 목록 즐겨찾기 필터
   contiKind: null,        // null(전체) | 'combo'(🧩 배합만) | 'full'(원래 콘티만)
   contiMarkOpen: null,    // 표시 고르기를 펼친 콘티 id
@@ -710,7 +710,14 @@ const CONTI_CATS = [
   ['slow', '🐢 느린', s => s.tempo === 'slow'],
   ['fast', '🐇 빠른', s => s.tempo === 'fast'],
 ];
-const contiCatTest = val => (CONTI_CATS.find(c => c[0] === val) || [])[2];
+/** 고른 분류들 → 곡 검사. 설교 전/후끼리·느린/빠른끼리는 "또는", 둘 사이는 "그리고" (예: 설교 전 + 느린 = 설교 전 느린 곡). 안 골랐으면 null */
+function contiCatTest(cats = LibState.contiCats) {
+  if (!cats.size) return null;
+  const sec = ['before', 'after'].filter(v => cats.has(v));
+  const tem = ['slow', 'fast'].filter(v => cats.has(v));
+  return s => (!sec.length || sec.includes(s.section)) && (!tem.length || tem.includes(s.tempo));
+}
+const CONTI_CAT_DIM = v => (v === 'before' || v === 'after' ? ['before', 'after'] : ['slow', 'fast']);
 /** 🧩 배합 콘티: 콘티에서 같은 분류(설교 전 느린 곡 등)끼리만 모아 따로 저장한 것 (서버 /api/admin/combos) */
 const isCombo = c => !!c.combo;
 const contiKindTest = c => !LibState.contiKind || (LibState.contiKind === 'combo') === isCombo(c);
@@ -730,10 +737,17 @@ function renderContiFilters(all) {
   if (!catEl || !markEl) return;
   // 분류 숫자는 지금 고른 즐겨찾기 안에서, 즐겨찾기 숫자는 지금 고른 분류 안에서 센다
   const inMark = base.filter(c => !LibState.contiMark || marksOf(contiMarkKey(c.id)).includes(LibState.contiMark));
-  const inCat = base.filter(c => !LibState.contiCat || c.songs.some(contiCatTest(LibState.contiCat)));
-  catEl.innerHTML = `<button type="button" class="lib-chord-chip${LibState.contiCat ? '' : ' active'}" data-action="conti-cat" data-val="">전체</button>`
-    + CONTI_CATS.map(([val, label, test]) => `<button type="button" class="lib-chord-chip cat-chip cat-${val}${LibState.contiCat === val ? ' active' : ''}"
-        data-action="conti-cat" data-val="${val}">${label} <span class="lib-chip-count">${inMark.filter(c => c.songs.some(test)).length}</span></button>`).join('');
+  const catTest = contiCatTest();
+  const inCat = base.filter(c => !catTest || c.songs.some(catTest));
+  const cats = LibState.contiCats;
+  // 칩 숫자: 그 칩만 (같은 줄의 다른 칩 대신) 고른다면 몇 개인지 — 다른 줄에서 고른 것과 같이
+  const countFor = val => {
+    const t = contiCatTest(new Set([...[...cats].filter(v => !CONTI_CAT_DIM(val).includes(v)), val]));
+    return inMark.filter(c => c.songs.some(t)).length;
+  };
+  catEl.innerHTML = `<button type="button" class="lib-chord-chip${cats.size ? '' : ' active'}" data-action="conti-cat" data-val="">전체</button>`
+    + CONTI_CATS.map(([val, label]) => `<button type="button" class="lib-chord-chip cat-chip cat-${val}${cats.has(val) ? ' active' : ''}" aria-pressed="${cats.has(val)}"
+        data-action="conti-cat" data-val="${val}">${label} <span class="lib-chip-count">${countFor(val)}</span></button>`).join('');
   const counts = new Map();
   inCat.forEach(c => marksOf(contiMarkKey(c.id)).forEach(m => counts.set(m, (counts.get(m) || 0) + 1)));
   const anyUsed = new Set(base.flatMap(c => marksOf(contiMarkKey(c.id))));
@@ -766,13 +780,13 @@ function renderContis() {
     return;
   }
   empty.classList.add('hidden');
-  const test = contiCatTest(LibState.contiCat);
+  const test = contiCatTest();
   const shown = LibState.contis.filter(c => contiKindTest(c) &&
     (!test || c.songs.some(test)) && (!LibState.contiMark || marksOf(contiMarkKey(c.id)).includes(LibState.contiMark)));
   const filtered = test || LibState.contiMark || LibState.contiKind;
   const kindWord = LibState.contiKind === 'combo' ? '배합' : '콘티';
   document.getElementById('contisCount').textContent = filtered
-    ? `${LibState.contiMark || ''} ${LibState.contiCat ? CONTI_CATS.find(x => x[0] === LibState.contiCat)[1] : ''} ${kindWord} ${shown.length}개`.trim()
+    ? `${LibState.contiMark || ''} ${CONTI_CATS.filter(x => LibState.contiCats.has(x[0])).map(x => x[1]).join(' ')} ${kindWord} ${shown.length}개`.replace(/\s+/g, ' ').trim()
     : `콘티 ${shown.length}개`;
   const pendingCount = LibState.contis.filter(c => !c.confirmed).length;
   list.innerHTML = (pendingCount ? `
@@ -1391,7 +1405,9 @@ function initDelegatedActions() {
         break;
       case 'toggle-song-mark': toggleSongMark(el.dataset.group, el.dataset.mark); break;
       case 'conti-cat':
-        LibState.contiCat = el.dataset.val && LibState.contiCat !== el.dataset.val ? el.dataset.val : null;
+        if (!el.dataset.val) LibState.contiCats.clear();
+        else if (LibState.contiCats.has(el.dataset.val)) LibState.contiCats.delete(el.dataset.val);
+        else LibState.contiCats.add(el.dataset.val);
         renderContis();
         break;
       case 'conti-kind':
