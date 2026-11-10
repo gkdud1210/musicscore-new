@@ -2573,3 +2573,10 @@ html[data-theme="light"] .live-add-head { color: #444; }
 /* 라이브 콘티 더하기: 🐢 느린 곡 / 🐇 빠른 곡 */
 .live-add-tempo { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 8px; }
 .live-add-tempo .live-to-chip small { opacity: .75; font-weight: 400; }
+
+/* 라이브 콘티 ✕ 빼기 (보고 있는 콘티 탭 옆에 붙어서) */
+.live-set-wrap { display: inline-flex; flex-shrink: 0; align-items: stretch; }
+.live-set-wrap.has-x .live-set-tab { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.live-set-x { flex-shrink: 0; background: #b42a3c; color: #fff; border: 1px solid #e5384f; border-left: 1px solid rgba(255,255,255,.35);
+  border-radius: 0 10px 10px 0; padding: 0 11px; font-size: 13px; font-weight: 800; cursor: pointer; }
+html[data-theme="light"] .live-set-x { background: #d92d43; }

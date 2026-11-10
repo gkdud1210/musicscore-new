@@ -1271,6 +1271,22 @@ function api_add_live_set(): array
     return ['live' => live_public($live), 'added_key' => $added];
 }
 
+/** ✕ 라이브에서 콘티 빼기 (모두의 화면에서 빠진다). 마지막 하나는 뺄 수 없다 → 라이브 종료 */
+function api_remove_live_set($key): array
+{
+    $key = (string)$key;
+    $live = live_update(function (?array $live) use ($key) {
+        $live = live_require_editor($live);
+        $i = array_search($key, array_column($live['sets'], 'key'), true);
+        if ($i === false) throw new ApiError(404, '라이브에 없는 콘티예요');
+        if (count($live['sets']) <= 1) throw new ApiError(400, '마지막 콘티는 뺄 수 없어요. 라이브를 끝내려면 ■ 종료를 눌러주세요');
+        array_splice($live['sets'], $i, 1);
+        if (($live['focus']['key'] ?? null) === $key) $live['focus'] = null;
+        return $live;
+    });
+    return ['live' => live_public($live)];
+}
+
 function live_invite_now(): array
 {
     return ['ts' => (int)(microtime(true) * 1000), 'from' => sender_name()];

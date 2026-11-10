@@ -68,6 +68,7 @@ $ROUTES = [
     ['POST', '#^/live$#', 'api_start_live', 'member_ok'],
     ['DELETE', '#^/live$#', 'api_stop_live', 'member_ok'],
     ['POST', '#^/live/sets$#', 'api_add_live_set', 'member_ok'],
+    ['DELETE', '#^/live/sets/([a-z0-9]{1,16})$#', 'api_remove_live_set', 'member_ok'],
     ['POST', '#^/live/focus$#', 'api_live_focus', 'member_ok'],
     ['POST', '#^/live/message$#', 'api_live_message', 'member_ok'],
     ['POST', '#^/live/invite$#', 'api_live_invite', 'member_ok'],

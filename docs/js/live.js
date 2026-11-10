@@ -458,9 +458,12 @@ function renderLiveTabs() {
   if (!V || !box) return;
   const live = LiveState.live;
   const shared = !V.local && live?.can_edit;
+  // ✕ 빼기: 보고 있는 콘티에만. 내 화면에만 더한 것·혼자 보기는 누구나, 함께 보는 라이브는 고칠 수 있는 사람만 (마지막 하나는 X)
+  const canRemove = st => V.sets.length > 1 && (st.mine || V.local || shared);
   box.innerHTML = `
-      ${V.sets.map((st, i) => `<button type="button" role="tab" aria-selected="${i === V.cur}" class="live-set-tab${i === V.cur ? ' active' : ''}${st.mine ? ' mine' : ''}${!V.local && live?.focus?.key === st.key ? ' focus' : ''}"
-          data-live="set" data-set="${i}">${i + 1}. ${escapeHtml(st.title)} <span>${st.songs.length}곡</span></button>`).join('')}
+      ${V.sets.map((st, i) => `<span class="live-set-wrap${i === V.cur && canRemove(st) ? ' has-x' : ''}"><button type="button" role="tab" aria-selected="${i === V.cur}" class="live-set-tab${i === V.cur ? ' active' : ''}${st.mine ? ' mine' : ''}${!V.local && live?.focus?.key === st.key ? ' focus' : ''}"
+          data-live="set" data-set="${i}">${i + 1}. ${escapeHtml(st.title)} <span>${st.songs.length}곡</span></button>${i === V.cur && canRemove(st)
+          ? `<button type="button" class="live-set-x" data-live="remove-set" data-set="${i}" title="${st.mine || V.local ? '이 콘티 빼기 (내 화면에서만)' : '이 콘티 빼기 (모두의 화면에서 빠져요)'}" aria-label="${escapeHtml(st.title)} 빼기">✕</button>` : ''}</span>`).join('')}
       <button type="button" class="live-set-tab add" data-live="add-set" title="${shared ? '콘티를 더하면 모두의 화면에 같이 생겨요' : '다른 콘티도 위에 추가해서 보기 (내 화면에만)'}">＋ 콘티</button>`;
   box.querySelector('.live-set-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'center' });
 }
@@ -761,6 +764,29 @@ async function openLiveAdd() {
   });
   input.addEventListener('input', e => draw(e.target.value.trim()));
   input.focus({ preventScroll: true });
+}
+
+/** ✕ 라이브에서 콘티 빼기: 함께 보는 콘티면 서버에서(모두의 화면에서), 내 화면에만 더한 것이면 내 화면에서만 */
+async function removeLiveSet(i) {
+  const V = LiveState.viewing;
+  const st = V?.sets[i];
+  if (!st || V.sets.length <= 1) return;
+  if (!st.mine && !V.local) {
+    if (!confirm(`"${st.title}"을(를) 라이브에서 뺄까요?\n모두의 화면에서 빠져요.`)) return;
+    try {
+      const { live } = await apiJson(`/api/live/sets/${encodeURIComponent(st.key)}`, { method: 'DELETE' });
+      LiveState.live = live;
+      syncLiveViewer(live);
+      showToast(`"${st.title}"을(를) 뺐어요.`, 'success');
+    } catch (e) {
+      showToast('콘티 빼기 실패: ' + e.message, 'error');
+    }
+    return;
+  }
+  V.sets.splice(i, 1);
+  V.cur = Math.min(i, V.sets.length - 1);
+  renderLiveSet();
+  showToast(`"${st.title}"을(를) 내 화면에서 뺐어요.`, 'success');
 }
 
 /** 고른 콘티를 더하기: 함께 보는 라이브면 서버에(모두에게), 아니면 내 화면에만 */
@@ -1085,6 +1111,7 @@ document.addEventListener('click', e => {
     case 'prev': stepLive(-1); break;
     case 'next': stepLive(1); break;
     case 'set': switchLiveSet(Number(el.dataset.set)); break;
+    case 'remove-set': removeLiveSet(Number(el.dataset.set)); break;
     case 'fullscreen': toggleLiveFullscreen(); break;
     case 'add-set': openLiveAdd(); break;
     case 'add-conti':
