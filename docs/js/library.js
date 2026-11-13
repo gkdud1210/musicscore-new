@@ -789,7 +789,8 @@ function renderContiFilters(all) {
     const k = (val, label, n) => `<button type="button" class="lib-chord-chip${LibState.contiKind === val ? ' active' : ''}" data-action="conti-kind" data-val="${val || ''}">${label}${n === null ? '' : ` <span class="lib-chip-count">${n}</span>`}</button>`;
     kindEl.innerHTML = k(null, '전체', null) + k('combo', '🧩 배합', nCombo) + k('full', '📄 원래 콘티', all.length - nCombo)
       + (AuthState.canEdit && AuthState.server === 'php'
-        ? '<button type="button" class="btn-sm admin-only combo-make-btn" data-action="make-combos" title="분류(설교 전/후·느린/빠른)가 같은 곡끼리 배합 콘티로 모아요. 겹치는 배합은 하나만 남겨요">🧩 배합 만들기</button>' : '');
+        ? '<button type="button" class="btn-sm admin-only combo-make-btn" data-action="make-combos" title="분류(설교 전/후·느린/빠른)가 같은 곡끼리 배합 콘티로 모아요. 겹치는 배합은 하나만 남기고, 원래 콘티는 그대로 둬요">🧩 배합 만들기</button>'
+          + (nCombo ? '<button type="button" class="btn-sm admin-only combo-make-btn" data-action="restore-originals" title="예전 배합 만들기로 지워진 원래 콘티를, 같은 날짜의 배합 곡들을 모아 다시 만들어요">📄 원래 콘티 되살리기</button>' : '') : '');
   }
   const base = all.filter(contiKindTest);
   const catEl = document.getElementById('contiCatChips');
@@ -1476,6 +1477,7 @@ function initDelegatedActions() {
         renderContis();
         break;
       case 'make-combos': makeCombos(); break;
+      case 'restore-originals': restoreOriginalContis(); break;
       case 'conti-mark-filter':
         LibState.contiMark = el.dataset.mark && LibState.contiMark !== el.dataset.mark ? el.dataset.mark : null;
         renderContis();
@@ -1592,18 +1594,15 @@ async function makeCombos() {
     showToast('배합을 찾는 중...', 'info', 2000);
     const dry = await apiJson('/api/admin/combos', jsonBody('POST', { dry_run: true }));
     const nNew = dry.created.length, nDup = dry.duplicates_skipped.length, nRm = dry.removed.length;
-    const nDel = dry.originals_deleted.length;
-    if (!nNew && !nRm && !nDel) {
+    if (!nNew && !nRm) {
       showToast(`새로 만들 배합이 없어요.${dry.unlabeled_songs ? ` 분류 안 된 곡 ${dry.unlabeled_songs}개는 콘티를 열어 설교 전/후·느린/빠른을 골라주세요.` : ''}`, 'info', 5000);
       return;
     }
-    const kept = dry.originals_kept_for_service || [];
     const msg = [nNew ? `🧩 배합 콘티 ${nNew}개를 만들까요?` : '🧩 배합을 정리할까요?',
       '(설교 전 느린 곡, 설교 전 빠른 곡처럼 같은 분류끼리 모아요.)',
       nDup ? `· 같은 곡들로 겹치는 배합 ${nDup}개는 하나만 남겨요.` : '',
       nRm ? `· 이미 있는 배합 중 겹치는 ${nRm}개는 지워요.` : '',
-      nDel ? `· 모든 곡이 배합으로 옮겨진 원래 콘티 ${nDel}개는 지워요 (필기·표시는 배합으로 옮겨요).` : '',
-      kept.length ? `· 예배 셋팅에 쓰인 콘티 ${kept.length}개는 남겨요.` : '',
+      '· 원래 콘티는 그대로 남아요.',
       dry.unlabeled_songs ? `· 분류 안 된 곡 ${dry.unlabeled_songs}개가 있는 콘티는 그대로 남겨요.` : ''].filter(Boolean).join('\n');
     if (!confirm(msg)) return;
     showToast('배합 콘티를 만드는 중... (조금 걸려요)', 'info', 8000);
@@ -1611,9 +1610,31 @@ async function makeCombos() {
     LibState.contiKind = 'combo';
     await refreshAll();
     openContiBuilder(true);   // 바로 배합으로 콘티 하나 짜서 보여주기
-    showToast(`🧩 배합 ${r.created.length}개를 만들었어요${r.removed.length ? ` · 겹치는 배합 ${r.removed.length}개 지움` : ''}${r.originals_deleted.length ? ` · 원래 콘티 ${r.originals_deleted.length}개 지움` : ''}.`, 'success', 5000);
+    showToast(`🧩 배합 ${r.created.length}개를 만들었어요${r.removed.length ? ` · 겹치는 배합 ${r.removed.length}개 지움` : ''}. 원래 콘티는 그대로예요.`, 'success', 5000);
   } catch (e) {
     showToast('배합 만들기 실패: ' + e.message, 'error');
+  }
+}
+
+/** 📄 원래 콘티 되살리기: 예전 배합 만들기로 지워진 원래 콘티를, 같은 날짜의 배합 곡들을 원래 순서대로 모아 다시 만든다 */
+async function restoreOriginalContis() {
+  try {
+    showToast('되살릴 원래 콘티를 찾는 중...', 'info', 2000);
+    const dry = await apiJson('/api/admin/restore-originals', jsonBody('POST', { dry_run: true }));
+    if (!dry.restored.length) {
+      showToast(`되살릴 원래 콘티가 없어요.${dry.skipped_existing ? ` (그 날짜에 원래 콘티가 이미 있는 곳 ${dry.skipped_existing}개는 그대로)` : ''}`, 'info', 5000);
+      return;
+    }
+    const list = dry.restored.slice(0, 12).map(r => `· ${r.date ? r.date + ' ' : ''}${r.title} (${r.songs}곡)`).join('\n');
+    const more = dry.restored.length > 12 ? `\n… 외 ${dry.restored.length - 12}개` : '';
+    if (!confirm(`📄 원래 콘티 ${dry.restored.length}개를 되살릴까요?\n같은 날짜의 배합 곡들을 원래 순서대로 한 콘티에 모아요. 필기·표시도 같이 가져오고, 배합은 그대로 남아요.\n${dry.skipped_existing ? `(그 날짜에 원래 콘티가 이미 있는 ${dry.skipped_existing}곳은 건드리지 않아요)\n` : ''}\n${list}${more}`)) return;
+    showToast('원래 콘티를 되살리는 중... (조금 걸려요)', 'info', 8000);
+    const r = await apiJson('/api/admin/restore-originals', jsonBody('POST', {}));
+    LibState.contiKind = 'full';
+    await refreshAll();
+    showToast(`📄 원래 콘티 ${r.restored.length}개를 되살렸어요. 콘티 목록의 "📄 원래 콘티"에서 볼 수 있어요.`, 'success', 6000);
+  } catch (e) {
+    showToast('원래 콘티 되살리기 실패: ' + e.message, 'error');
   }
 }
 

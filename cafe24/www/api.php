@@ -98,6 +98,7 @@ $ROUTES = [
     ['POST', '#^/admin/import$#', 'api_admin_import', 'admin'],
     ['POST', '#^/admin/rehash$#', 'api_admin_rehash', 'admin'],
     ['POST', '#^/admin/combos$#', 'api_admin_combos', 'admin'],
+    ['POST', '#^/admin/restore-originals$#', 'api_admin_restore_originals', 'admin'],
 ];
 
 function route_path(): string
