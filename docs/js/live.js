@@ -219,7 +219,7 @@ async function stopLive() {
     LiveState.live = null;
     renderLiveIndicator();
     closeLiveViewer();
-    showToast('라이브를 끝냈어요.', 'success');
+    showToast('라이브를 끝냈어요. 🕘 기록에 남아 있어서 ▶ 이어서 라이브로 다시 시작할 수 있어요.', 'success', 5000);
     if (typeof renderWorshipSetup === 'function' && LibState?.modal?.type === 'worship') renderWorshipSetup();
   } catch (e) {
     showToast('실패: ' + e.message, 'error');

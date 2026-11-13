@@ -3,6 +3,7 @@
  * - 처음 열면 칸마다 배합을 하나씩 골라 바로 보여준다 (고른 것은 이 기기에 기억)
  * - 🔄 다른 배합: 그 칸만 바꾸기 · 목록에서 직접 고르기 · 칸 빼기/더하기
  * - 나만 보기 / NOW 라이브 / 새 콘티에 담기 / (관리자) 콘티로 저장
+ * - 짠 콘티는 위 버튼을 누르거나 🕘 기록에 남기기를 누르면 서버의 🕘 기록에 남는다 (history.js)
  */
 const CB_KEY = 'jandi.builder';
 const CB_CATS = [
@@ -82,6 +83,7 @@ function renderContiBuilder() {
       <button type="button" class="btn-sm" data-cb="reroll-all">🎲 전부 다시 고르기</button>
       <button type="button" class="btn-sm" data-cb="preview"${total ? '' : ' disabled'}>👀 나만 보기</button>
       <button type="button" class="btn-sm" data-cb="setlist"${total ? '' : ' disabled'}>＋ 새 콘티에 담기</button>
+      ${AuthState.server === 'php' ? `<button type="button" class="btn-sm" data-cb="record"${total ? '' : ' disabled'} title="짠 콘티를 🕘 기록에 남겨요 (나중에 다시 불러오거나 라이브 시작)">🕘 기록에 남기기</button>` : ''}
       ${AuthState.canEdit && AuthState.server === 'php' ? `<button type="button" class="btn-sm" data-cb="save"${total ? '' : ' disabled'}>💾 콘티로 저장</button>` : ''}
       <button type="button" class="btn-now" data-cb="live"${total ? '' : ' disabled'}>📡 NOW 라이브</button>
     </div>`;
@@ -140,9 +142,16 @@ async function cbSongs() {
   return parts.flat();
 }
 
+/** 짠 콘티를 쓰면(보기·라이브·담기·저장) 🕘 기록에도 남긴다 */
+function cbRecord(title) {
+  if (AuthState.server === 'php' && typeof recordBuiltConti === 'function') recordBuiltConti(title);
+}
+
 async function cbAction(act, el) {
   const i = Number(el?.dataset.i);
+  if (['preview', 'live', 'setlist'].includes(act)) cbRecord();
   switch (act) {
+    case 'record': recordBuiltConti(null, false); return;
     case 'reroll': Builder.slots[i].id = cbPick(Builder.slots[i].cat, [Builder.slots[i].id, ...cbUsedIds(i)]); break;
     case 'reroll-all': Builder.slots.forEach((s, k) => { s.id = cbPick(s.cat, [s.id, ...cbUsedIds(k)]); }); break;
     case 'remove': Builder.slots.splice(i, 1); break;
@@ -179,6 +188,7 @@ async function cbAction(act, el) {
         const conti = await apiJson('/api/setlist/save', jsonBody('POST', {
           song_ids: songs.map(s => s.id), title: title.trim() || nextSundayLabel(), include_annotations: true,
         }));
+        cbRecord(conti.title);
         showToast(`"${conti.title}"을 콘티 목록에 저장했어요 (${conti.page_count}쪽).`, 'success', 5000);
         closeModal(true);
         await refreshAll();

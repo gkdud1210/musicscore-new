@@ -1154,6 +1154,9 @@ function live_update(callable $fn): ?array
             $next['rev'] = (int)($live['rev'] ?? 0) + 1;
             $next['updated_ts'] = time();
             $next['songs'] = $next['sets'] ? array_merge(...array_column($next['sets'], 'songs')) : [];   // 예전 화면용
+            history_from_live($next);   // 🕘 기록에도 그대로 남긴다 (끝나도 다시 이어서 시작할 수 있게)
+        } elseif ($live) {
+            history_from_live($live, true);   // 끝냄 → 기록에 '끝남' 표시
         }
         q("UPDATE app_state SET v = ?, updated_at = NOW() WHERE k = 'live'",
           [$next === null ? null : json_encode($next, JSON_UNESCAPED_UNICODE)]);
@@ -1219,7 +1222,8 @@ function api_start_live(): array
     if (!$sets) throw new ApiError(400, '보낼 곡이 없어요');
     $joined = false;
     $token = null;
-    $live = live_update(function (?array $live) use ($b, $sets, &$joined, &$token) {
+    $resume = history_id($b['resume'] ?? null);
+    $live = live_update(function (?array $live) use ($b, $sets, $resume, &$joined, &$token) {
         if ($live) {
             $joined = true;
             $live = live_append($live, $sets);
@@ -1237,6 +1241,8 @@ function api_start_live(): array
             'started_ts' => (int)$now,
             'started_at' => date('H:i', (int)$now),
             'focus' => null,
+            'hist_id' => $resume,       // 🕘 기록에서 이어서 시작하면 그 기록을 이어서 고친다
+            'by' => sender_name(),
         ];
     });
     if ($token) {
@@ -1453,6 +1459,130 @@ function api_stop_live(): array
     live_update(fn(?array $live) => null);
     setcookie(LIVE_COOKIE, '', ['expires' => time() - 3600, 'path' => '/']);
     return ['live' => null];
+}
+
+// ── 🕘 기록: 라이브했던 콘티 · 콘티 짜기로 짠 콘티 ─────────────────────
+// app_state 'history:<id>' 에 JSON 으로. 곡은 id 만 저장하고, 다시 열 때 지금 악보로 채운다.
+const HISTORY_MAX = 80;
+
+function history_id($v): ?int
+{
+    return is_numeric($v) && (int)$v > 0 ? (int)$v : null;
+}
+
+/** 묶음들 → 저장용 [{title, conti_id, song_ids}] (붙여넣은 사진 같은 곡 아닌 것은 뺀다) */
+function history_sets(array $sets): array
+{
+    $out = [];
+    foreach (array_slice($sets, 0, 30) as $st) {
+        $ids = $st['song_ids'] ?? array_column((array)($st['songs'] ?? []), 'id');
+        $ids = array_slice(array_values(array_unique(array_filter(array_map('intval', (array)$ids)))), 0, 80);
+        if (!$ids) continue;
+        $out[] = ['title' => mb_substr(trim((string)($st['title'] ?? '')), 0, 100) ?: '콘티',
+                  'conti_id' => history_id($st['conti_id'] ?? null), 'song_ids' => $ids];
+    }
+    return $out;
+}
+
+function history_get(int $id): ?array
+{
+    $v = state_get("history:$id");
+    $h = $v ? json_decode($v, true) : null;
+    return is_array($h) ? $h : null;
+}
+
+/** 오래된 것부터 지워서 HISTORY_MAX 개만 남긴다 */
+function history_put(array $h): void
+{
+    state_set('history:' . $h['id'], json_encode($h, JSON_UNESCAPED_UNICODE));
+    $rows = q_all("SELECT k FROM app_state WHERE k LIKE 'history:%' ORDER BY updated_at DESC, k DESC");
+    foreach (array_slice($rows, HISTORY_MAX) as $r) q('DELETE FROM app_state WHERE k = ?', [$r['k']]);
+}
+
+/** 진행 중인 라이브를 기록에 남긴다 (바뀔 때마다). ended 면 끝난 시각만 */
+function history_from_live(array $live, bool $ended = false): void
+{
+    $sets = history_sets($live['sets'] ?? []);
+    if (!$sets) return;   // 붙여넣은 사진만 있던 라이브는 남기지 않는다
+    $id = history_id($live['hist_id'] ?? null) ?? (int)$live['id'];
+    $old = history_get($id) ?? [];
+    history_put([
+        'id' => $id, 'kind' => 'live',
+        'title' => (string)($live['title'] ?? '') ?: $sets[0]['title'],
+        'date' => $live['date'] ?? ($old['date'] ?? null),
+        'sets' => $sets,
+        'by' => $old['by'] ?? ($live['by'] ?? ''),
+        'created_ts' => $old['created_ts'] ?? (int)($live['started_ts'] ?? time()),
+        'live_id' => (int)$live['id'],
+        'live_ts' => (int)($live['started_ts'] ?? time()),
+        'updated_ts' => time(),
+        'ended_ts' => $ended ? time() : null,
+        'slots' => $old['slots'] ?? null,
+    ]);
+}
+
+function history_public(array $h, ?array $live): array
+{
+    $h['live_now'] = $live && (int)($h['live_id'] ?? 0) === (int)$live['id'];
+    $h['song_count'] = array_sum(array_map(fn($st) => count($st['song_ids']), $h['sets'] ?? []));
+    return $h;
+}
+
+function api_list_history(): array
+{
+    $live = current_live();
+    $out = [];
+    foreach (q_all("SELECT v FROM app_state WHERE k LIKE 'history:%' ORDER BY updated_at DESC, k DESC LIMIT " . HISTORY_MAX) as $r) {
+        $h = json_decode((string)$r['v'], true);
+        if (is_array($h) && !empty($h['sets'])) $out[] = history_public($h, $live);
+    }
+    usort($out, fn($a, $b) => ($b['updated_ts'] ?? 0) <=> ($a['updated_ts'] ?? 0));
+    return ['history' => $out];
+}
+
+/** 🎲 콘티 짜기로 짠 콘티 저장. 바로 전 것과 곡이 똑같으면 새로 만들지 않고 시각만 */
+function api_save_history(): array
+{
+    $b = body_json();
+    $sets = history_sets((array)($b['sets'] ?? []));
+    if (!$sets) throw new ApiError(400, '저장할 곡이 없어요');
+    $slots = [];
+    foreach (array_slice((array)($b['slots'] ?? []), 0, 12) as $sl) {
+        if (is_array($sl) && is_string($sl['cat'] ?? null)) $slots[] = ['cat' => mb_substr($sl['cat'], 0, 20), 'id' => history_id($sl['id'] ?? null)];
+    }
+    $sig = json_encode(array_column($sets, 'song_ids'));
+    $last = null;
+    foreach (q_all("SELECT v FROM app_state WHERE k LIKE 'history:%' ORDER BY updated_at DESC LIMIT 20") as $r) {
+        $h = json_decode((string)$r['v'], true);
+        if (($h['kind'] ?? '') === 'built' && json_encode(array_column($h['sets'] ?? [], 'song_ids')) === $sig) { $last = $h; break; }
+    }
+    $now = time();
+    $h = $last ?? ['id' => (int)(microtime(true) * 1000), 'kind' => 'built', 'by' => sender_name(), 'created_ts' => $now, 'ended_ts' => null];
+    $h['title'] = mb_substr(trim((string)($b['title'] ?? '')), 0, 100) ?: ($h['title'] ?? '짠 콘티');
+    $h['date'] = valid_date($b['date'] ?? null) ?? ($h['date'] ?? null);
+    $h['sets'] = $sets;
+    $h['slots'] = $slots ?: ($h['slots'] ?? null);
+    $h['updated_ts'] = $now;
+    history_put($h);
+    return ['history' => history_public($h, current_live()), 'same' => $last !== null];
+}
+
+function api_rename_history(int $id): array
+{
+    $h = history_get($id);
+    if (!$h) throw new ApiError(404, '없는 기록이에요');
+    $t = mb_substr(trim((string)(body_json()['title'] ?? '')), 0, 100);
+    if ($t === '') throw new ApiError(400, '이름을 적어주세요');
+    $h['title'] = $t;
+    state_set("history:$id", json_encode($h, JSON_UNESCAPED_UNICODE));   // 순서(최근 사용)는 그대로
+    q("UPDATE app_state SET updated_at = FROM_UNIXTIME(?) WHERE k = ?", [(int)($h['updated_ts'] ?? time()), "history:$id"]);
+    return ['history' => history_public($h, current_live())];
+}
+
+function api_delete_history(int $id): array
+{
+    q('DELETE FROM app_state WHERE k = ?', ["history:$id"]);
+    return ['success' => true];
 }
 
 // ── 예배 라이브 셋팅 (날짜별) ─────────────────────────────────

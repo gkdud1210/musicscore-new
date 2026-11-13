@@ -312,6 +312,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
   // 새 콘티를 라이브러리에 저장하기는 카페24 서버에만 있다
   if (AuthState.server !== 'php') document.getElementById('setlistSaveBtn')?.remove();
+  // 🕘 기록(라이브·짠 콘티)도 카페24 서버에만 있다
+  if (AuthState.server !== 'php') document.querySelectorAll('.php-only').forEach(el => el.remove());
   renderHeaderAccount();
   showInstallGuideOnce();
   startPresence();
