@@ -704,6 +704,7 @@ function renderSongVersion(s, same = [s], extraBtn = '') {
         <div class="song-version-actions">
           ${extraBtn}
           ${addButton(s)}
+          ${isPhpServer() ? `<button type="button" class="btn-sm" data-live="to-live-song" data-id="${s.id}" data-title="${escapeHtml(s.title)}" title="이 악보를 라이브에 넣어요 (라이브 중이면 어느 콘티에 넣을지 골라요)">📡 라이브에</button>` : ''}
           <button class="btn-sm admin-only" data-action="edit-song" data-id="${s.id}">✏️ 수정</button>
           <a class="btn-sm" href="viewer.html?id=${s.score_id}&page=${s.page_start}">✍️ 필기</a>
         </div>
@@ -872,6 +873,7 @@ function renderContis() {
       <div class="conti-actions">
         <button class="btn-sm" data-action="open-conti" data-id="${c.id}">${AuthState.canEdit ? '🧩 곡 나누기·수정' : '📄 악보 보기'}</button>
         <button class="btn-sm" data-action="add-conti" data-id="${c.id}">＋ 전체 담기</button>
+        ${isPhpServer() ? `<button type="button" class="btn-sm" data-live="to-live-conti" data-id="${c.id}" title="이 콘티를 라이브에 넣어요 (라이브 중이면 새 탭으로 또는 어느 콘티에 넣을지 골라요)">📡 라이브에</button>` : ''}
         <a class="btn-sm" href="viewer.html?id=${c.id}">✍️ 필기</a>
         <button class="btn-sm admin-only" data-action="delete-conti" data-id="${c.id}">🗑️</button>
       </div>

@@ -2717,3 +2717,6 @@ html[data-theme="light"] .live-ink-grip { color: #888; }
 .live-track.overview .live-slide.ov-cur { outline-color: var(--accent); }
 .live-viewer.ov .live-nav { display: none; }
 html[data-theme="light"] .live-track.overview { background: #e6e7ec; }
+/* 📡 라이브에 넣기 고르기: 콘티가 많아도 스크롤 */
+.live-leave-box { max-height: 85vh; overflow-y: auto; }
+.live-leave-title small { display: block; font-weight: 500; font-size: 13px; opacity: .75; margin-top: 2px; }

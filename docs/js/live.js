@@ -405,9 +405,70 @@ async function notifyLive() {
 function sendLiveFromConti() {
   const m = LibState.modal;
   if (!m || m.type !== 'conti' || !m.songs) return;
+  if (LiveState.live) { liveAddFromLibrary('conti', m.id); return; }   // 라이브 중이면 어디에 넣을지 고르기
   const songs = [...m.songs].sort((a, b) => a.page_start - b.page_start);
   const conti = LibState.contis.find(c => c.id === m.id);
   sendLive(conti?.songs?.length ? contiDisplayName(conti) : conti?.title || songs[0]?.conti_title || '오늘 콘티', songs.map(s => s.id), m.id);
+}
+
+/* ── 📡 라이브에 넣기 (라이브러리의 악보·콘티에서) ─────────────────────────────
+ * 라이브가 없으면 그걸로 시작. 있으면 고르기: ＋ 새 콘티 탭으로 / 라이브에 있는 콘티 맨 뒤에 / 취소 */
+async function liveAddFromLibrary(kind, id, title) {
+  try {
+    let set;
+    if (kind === 'conti') {
+      const c = LibState.contis.find(x => x.id === id);
+      set = await liveSetFromConti(id, c ? contiDisplayName(c) : title || '콘티');
+    } else {
+      set = await liveSetFromSongIds([id], title || '악보');
+      set.title = title || set.songs[0]?.title || '악보';
+    }
+    if (!set.songs.length) { showToast('넣을 악보가 없어요.', 'info'); return; }
+    if (!LiveState.live) { sendLive(set.title, set.songs.map(s => s.id), set.conti_id || null); return; }
+    openLiveAddPicker(set);
+  } catch (e) {
+    showToast('라이브에 넣기 실패: ' + e.message, 'error');
+  }
+}
+
+function openLiveAddPicker(set) {
+  document.getElementById('liveLeaveSheet')?.remove();
+  const live = LiveState.live;
+  const el = document.createElement('div');
+  el.id = 'liveLeaveSheet';
+  el.className = 'live-leave-sheet';
+  const n = set.songs.length;
+  el.innerHTML = `<div class="live-leave-box" role="dialog" aria-modal="true" aria-label="라이브에 넣기">
+    <p class="live-leave-title">📡 라이브에 넣기<br><small>${escapeHtml(set.title)} · ${n}곡</small></p>
+    <button type="button" class="live-leave-btn" data-live="pick-new">＋ 새 콘티 탭으로 <small>라이브 위에 "${escapeHtml(set.title)}" 탭이 생겨요</small></button>
+    ${live.sets.filter(st => st.key !== LIVE_PASTE_KEY).map(st => `<button type="button" class="live-leave-btn" data-live="pick-into" data-key="${escapeHtml(st.key)}">→ ${escapeHtml(st.title)} <small>맨 뒤에 ${n}곡 넣기 (지금 ${st.songs.length}곡)</small></button>`).join('')}
+    <button type="button" class="live-leave-cancel" data-live="leave-cancel">취소</button>
+  </div>`;
+  LiveState.pickSet = set;
+  el.addEventListener('click', e => { if (e.target === el) el.remove(); });
+  (document.fullscreenElement || document.body).appendChild(el);
+}
+
+async function liveAddPicked(key) {
+  const set = LiveState.pickSet;
+  document.getElementById('liveLeaveSheet')?.remove();
+  if (!set) return;
+  try {
+    let live;
+    if (!key) {
+      ({ live } = await apiJson('/api/live/sets', jsonBody('POST', { title: set.title, conti_id: set.conti_id || null, song_ids: set.songs.map(s => s.id) })));
+    } else {
+      for (const s of set.songs) ({ live } = await apiJson(`/api/live/sets/${encodeURIComponent(key)}/copy-song`, jsonBody('POST', { song_id: s.id })));
+    }
+    LiveState.live = live;
+    renderLiveIndicator();
+    const V = LiveState.viewing;
+    if (LiveState.viewerOpen && V && !V.local && V.id === live.id) { syncLiveViewerQuiet(live); renderLiveSet(); }
+    const where = key ? `"${live.sets.find(st => st.key === key)?.title || ''}" 맨 뒤에` : '새 콘티 탭으로';
+    showToast(`📡 "${set.title}"을(를) 라이브 ${where} 넣었어요. 모두의 화면에 같이 보여요.`, 'success', 4000);
+  } catch (e) {
+    showToast('라이브에 넣기 실패: ' + e.message + (/403/.test(e.message) ? ' (입장한 사람만 넣을 수 있어요)' : ''), 'error');
+  }
 }
 
 /** 새 콘티 트레이의 NOW 버튼: 담은 순서대로 보낸다 */
@@ -1355,6 +1416,10 @@ document.addEventListener('click', e => {
       break;
     }
     case 'send-conti': sendLiveFromConti(); break;
+    case 'to-live-conti': liveAddFromLibrary('conti', Number(el.dataset.id)); break;
+    case 'to-live-song': liveAddFromLibrary('song', Number(el.dataset.id), el.dataset.title); break;
+    case 'pick-new': liveAddPicked(null); break;
+    case 'pick-into': liveAddPicked(el.dataset.key); break;
     case 'send-setlist': sendLiveFromSetlist(); break;
   }
 });
