@@ -1443,10 +1443,10 @@ function api_copy_live_song($key): array
 {
     $key = (string)$key;
     $b = body_json();
-    $songId = (int)($b['song_id'] ?? 0);
+    $ids = array_filter(array_map('intval', (array)($b['song_ids'] ?? [($b['song_id'] ?? 0)])));   // 여러 곡도 한 번에
     $url = (string)($b['url'] ?? '');
-    $new = $songId ? live_songs_for([$songId], sheet_of_map()) : [];
-    if ($songId && !$new) throw new ApiError(404, '없는 악보예요');
+    $new = $ids ? live_songs_for($ids, sheet_of_map()) : [];
+    if ($ids && !$new) throw new ApiError(404, '없는 악보예요');
     $live = live_update(function (?array $live) use ($key, $url, $new) {
         $live = live_require_editor($live);
         $i = array_search($key, array_column($live['sets'], 'key'), true);
@@ -1457,7 +1457,7 @@ function api_copy_live_song($key): array
             }
             if (!$new) throw new ApiError(404, '라이브에서 그 사진이 빠졌어요');
         }
-        if (count($live['sets'][$i]['songs']) >= 80) throw new ApiError(400, '한 콘티에 80곡까지 넣을 수 있어요');
+        if (count($live['sets'][$i]['songs']) + count($new) > 80) throw new ApiError(400, '한 콘티에 80곡까지 넣을 수 있어요');
         array_push($live['sets'][$i]['songs'], ...$new);
         return $live;
     });

@@ -2760,3 +2760,6 @@ body.conti-reordering #contiSongsWrap { touch-action: none; user-select: none; -
 .conti-song-no { cursor: grab; }
 /* 끌어 옮길 때 자리 계산 기준 */
 #contiSongsWrap, #liveSets, #liveSongs { position: relative; }
+/* ＋ 곡 추가 (이 콘티 맨 뒤에) */
+.live-song-chip.add-into { border-style: dashed; color: #b9bcff; background: transparent; }
+html[data-theme="light"] .live-song-chip.add-into { color: #4338ca; background: transparent; }
