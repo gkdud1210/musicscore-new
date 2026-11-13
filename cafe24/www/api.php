@@ -71,6 +71,7 @@ $ROUTES = [
     ['POST', '#^/live/sets/order$#', 'api_order_live_sets', 'member_ok'],
     ['POST', '#^/live/sets/([a-z0-9]{1,16})/order$#', 'api_order_live_songs', 'member_ok'],
     ['POST', '#^/live/sets/([a-z0-9]{1,16})/replace-song$#', 'api_replace_live_song', 'member_ok'],
+    ['POST', '#^/live/sets/([a-z0-9]{1,16})/copy-song$#', 'api_copy_live_song', 'member_ok'],
     ['DELETE', '#^/live/sets/([a-z0-9]{1,16})$#', 'api_remove_live_set', 'member_ok'],
     ['POST', '#^/live/sets/([a-z0-9]{1,16})/remove-song$#', 'api_remove_live_song', 'member_ok'],
     ['POST', '#^/live/focus$#', 'api_live_focus', 'member_ok'],

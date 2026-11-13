@@ -8,6 +8,7 @@
  */
 const LiveInk = {
   on: false,
+  hand: false,            // ✋ 손바닥: 손가락으로 악보 확대·축소·옮기기 (쓰기는 잠깐 멈춤)
   tool: 'pen',            // pen | highlighter | eraser
   color: { pen: '#ff3b30', highlighter: '#ffe600' },
   width: { pen: 8, highlighter: 40, eraser: 20 },   // 1~200 (annotate.js 와 같은 눈금: 값 / 2000 × 쪽 폭). 형광펜은 아주 굵게도
@@ -230,7 +231,8 @@ function toggleLiveInk(on = !LiveInk.on) {
   document.getElementById('liveViewer')?.classList.toggle('inking', on);
   document.querySelector('[data-live="ink"]')?.classList.toggle('active', on);
   renderLiveInkBar();
-  if (on) showToast('✍️ 악보 위에 써요. 넘기기는 ‹ › 버튼으로. 쓴 건 팀 모두의 같은 악보에 남아요.', 'info', 3500);
+  if (!on) { LiveInk.hand = false; document.getElementById('liveViewer')?.classList.remove('hand'); }
+  if (on) showToast('✍️ 악보 위에 써요. ✋ 를 누르면 손가락으로 확대·옮기기, 넘기기는 ‹ › 버튼으로. 쓴 건 팀 모두의 같은 악보에 남아요.', 'info', 4000);
 }
 
 function renderLiveInkBar() {
@@ -245,19 +247,25 @@ function renderLiveInkBar() {
     v.appendChild(bar);
   }
   const t = LiveInk.tool;
-  const tool = (k, label) => `<button type="button" class="live-ink-btn${t === k ? ' on' : ''}" data-live="ink-tool" data-tool="${k}">${label}</button>`;
+  const tool = (k, label) => `<button type="button" class="live-ink-btn${t === k && !LiveInk.hand ? ' on' : ''}" data-live="ink-tool" data-tool="${k}">${label}</button>`;
   const colors = (LIVE_INK_COLORS[t] || []).map(([c, name]) =>
     `<button type="button" class="live-ink-color${LiveInk.color[t] === c ? ' on' : ''}" data-live="ink-color" data-color="${c}" style="background:${c}" title="${name}" aria-label="${name}"></button>`).join('');
   const w = LiveInk.width[t];
   const widths = `<label class="live-ink-width" title="굵기 (1~${LIVE_INK_MAX})">
       <input type="range" id="liveInkWidth" min="1" max="${LIVE_INK_MAX}" step="1" value="${w}" aria-label="굵기" />
       <span class="live-ink-prev" id="liveInkPrev"><i></i></span><b id="liveInkWval">${w}</b></label>`;
-  bar.innerHTML = `${tool('pen', '🖊️')}${tool('highlighter', '🖍️')}${tool('eraser', '🧽')}
+  bar.innerHTML = `<span class="live-ink-grip" title="끌어서 옮기기" aria-label="도구 창 옮기기">⠿</span>
+    <button type="button" class="live-ink-btn${LiveInk.hand ? ' on' : ''}" data-live="ink-hand" title="손바닥: 손가락으로 악보 확대·축소·옮기기 (다시 쓰려면 🖊️)" aria-label="손바닥">✋</button>
+    ${tool('pen', '🖊️')}${tool('highlighter', '🖍️')}${tool('eraser', '🧽')}
     <span class="live-ink-sep"></span>${t === 'eraser' ? '' : colors}${t === 'eraser' ? '' : '<span class="live-ink-sep"></span>'}${widths}
     <span class="live-ink-sep"></span>
     <button type="button" class="live-ink-btn" data-live="ink-undo" title="되돌리기" aria-label="되돌리기">↩️</button>
     <button type="button" class="live-ink-btn" data-live="ink-redo" title="다시 하기" aria-label="다시 하기">↪️</button>
+    ${liveZoomed() ? '<button type="button" class="live-ink-btn" data-live="ink-zoom-reset" title="원래 크기로" aria-label="원래 크기로">🔍↺</button>' : ''}
     <button type="button" class="live-ink-btn done" data-live="ink">완료</button>`;
+  document.getElementById('liveViewer')?.classList.toggle('hand', LiveInk.hand);
+  placeLiveInkBar(bar);
+  bar.querySelector('.live-ink-grip').addEventListener('pointerdown', e => dragLiveInkBar(e, bar));
   const range = bar.querySelector('#liveInkWidth');
   range.addEventListener('input', () => {
     LiveInk.width[LiveInk.tool] = Number(range.value);
@@ -289,7 +297,11 @@ function updateLiveInkPreview() {
 function liveInkAction(act, el) {
   switch (act) {
     case 'ink': toggleLiveInk(); return true;
-    case 'ink-tool': LiveInk.tool = el.dataset.tool; break;
+    case 'ink-tool': LiveInk.tool = el.dataset.tool; LiveInk.hand = false; break;
+    case 'ink-hand': LiveInk.hand = !LiveInk.hand; renderLiveInkBar();
+      if (LiveInk.hand) showToast('✋ 두 손가락으로 벌리면 확대, 한 손가락으로 옮겨요. 쓰려면 🖊️', 'info', 2500);
+      return true;
+    case 'ink-zoom-reset': resetLiveZoom(); return true;
     case 'ink-color': LiveInk.color[LiveInk.tool] = el.dataset.color; break;
     case 'ink-undo': liveInkUndo(); return true;
     case 'ink-redo': liveInkUndo(true); return true;
@@ -299,3 +311,124 @@ function liveInkAction(act, el) {
   renderLiveInkBar();
   return true;
 }
+
+/* ── ⠿ 도구 창 옮기기: 손잡이를 끌면 창이 따라온다 (자리는 기기에 기억) ─────────── */
+const LIVE_INK_POS_KEY = 'jandi.live.inkbar';
+
+function placeLiveInkBar(bar) {
+  let pos = null;
+  try { pos = JSON.parse(localStorage.getItem(LIVE_INK_POS_KEY) || 'null'); } catch { /* 없음 */ }
+  if (!pos) { bar.style.left = bar.style.top = bar.style.transform = bar.style.bottom = ''; return; }
+  const v = bar.parentElement.getBoundingClientRect();
+  const r = bar.getBoundingClientRect();
+  // 화면 크기가 바뀌어도 창이 화면 밖으로 나가지 않게 (비율로 기억)
+  const x = Math.min(Math.max(pos.x * v.width, 0), Math.max(0, v.width - r.width));
+  const y = Math.min(Math.max(pos.y * v.height, 0), Math.max(0, v.height - r.height));
+  Object.assign(bar.style, { left: x + 'px', top: y + 'px', bottom: 'auto', transform: 'none' });
+}
+
+function dragLiveInkBar(e, bar) {
+  e.preventDefault();
+  const v = bar.parentElement.getBoundingClientRect();
+  const r = bar.getBoundingClientRect();
+  const dx = e.clientX - r.left, dy = e.clientY - r.top;
+  bar.classList.add('moving');
+  const move = ev => {
+    const x = Math.min(Math.max(ev.clientX - dx - v.left, 0), v.width - r.width);
+    const y = Math.min(Math.max(ev.clientY - dy - v.top, 0), v.height - r.height);
+    Object.assign(bar.style, { left: x + 'px', top: y + 'px', bottom: 'auto', transform: 'none' });
+  };
+  const up = () => {
+    bar.classList.remove('moving');
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', up);
+    const b = bar.getBoundingClientRect();
+    try { localStorage.setItem(LIVE_INK_POS_KEY, JSON.stringify({ x: (b.left - v.left) / v.width, y: (b.top - v.top) / v.height })); } catch { /* 저장 불가 */ }
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
+}
+window.addEventListener('resize', () => { const b = document.getElementById('liveInkBar'); if (b) placeLiveInkBar(b); });
+
+/* ── ✋ 손바닥: 두 손가락으로 확대·축소, 확대된 뒤엔 한 손가락으로 옮기기 ─────────────
+ * 그림과 필기 캔버스에 같은 변환을 걸어서, 확대한 채로 🖊️ 를 누르면 그 자리에 그대로 쓸 수 있다
+ * (쓰는 좌표는 화면에 보이는 캔버스 크기로 계산하니 확대해도 맞는다). */
+const LiveZoom = new WeakMap();   // .live-slide → { s, x, y }
+const LiveTouch = { pts: new Map(), slide: null, start: null };
+
+const zoomOf = slide => LiveZoom.get(slide) || { s: 1, x: 0, y: 0 };
+const curLiveSlide = () => document.querySelectorAll('#liveTrack .live-slide')[liveIndex()] || null;
+const liveZoomed = () => { const sl = curLiveSlide(); return !!sl && zoomOf(sl).s > 1.01; };
+
+function applyLiveZoom(slide, z) {
+  if (z.s <= 1.01) z = { s: 1, x: 0, y: 0 };
+  LiveZoom.set(slide, z);
+  slide.classList.toggle('zoomed', z.s > 1);
+  slide.querySelectorAll('img, canvas.live-ink').forEach(el => {
+    el.style.transformOrigin = '0 0';
+    el.style.transform = z.s > 1 ? `translate(${z.x}px, ${z.y}px) scale(${z.s})` : '';
+  });
+}
+
+function resetLiveZoom() {
+  const sl = curLiveSlide();
+  if (sl) applyLiveZoom(sl, { s: 1, x: 0, y: 0 });
+  renderLiveInkBar();
+}
+
+/** 그림의 (확대 전) 왼쪽 위 화면 좌표 */
+function liveImgBase(slide) {
+  const img = slide.querySelector('img');
+  const r = slide.getBoundingClientRect();
+  return { x: r.left + img.offsetLeft - slide.scrollLeft, y: r.top + img.offsetTop - slide.scrollTop };
+}
+
+function liveTouchInfo() {
+  const p = [...LiveTouch.pts.values()];
+  if (p.length < 2) return { mx: p[0].x, my: p[0].y, d: 0 };
+  return { mx: (p[0].x + p[1].x) / 2, my: (p[0].y + p[1].y) / 2, d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) };
+}
+
+function liveZoomStart(slide) {
+  LiveTouch.slide = slide;
+  LiveTouch.start = { ...liveTouchInfo(), z: { ...zoomOf(slide) }, base: liveImgBase(slide), n: LiveTouch.pts.size };
+}
+
+document.addEventListener('pointerdown', e => {
+  if (!LiveInk.on || !LiveInk.hand || e.pointerType === 'mouse') return;
+  const slide = e.target.closest?.('#liveTrack .live-slide');
+  if (!slide) return;
+  LiveTouch.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (LiveTouch.pts.size > 2) return;
+  liveZoomStart(slide);
+});
+
+document.addEventListener('pointermove', e => {
+  if (!LiveTouch.pts.has(e.pointerId) || !LiveTouch.slide) return;
+  LiveTouch.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const st = LiveTouch.start;
+  const now = liveTouchInfo();
+  const z0 = st.z;
+  if (LiveTouch.pts.size >= 2 && st.d) {
+    // 두 손가락 가운데 점이 손가락을 따라가게 확대·축소
+    const s = Math.min(Math.max(z0.s * now.d / st.d, 1), 6);
+    const ux = (st.mx - st.base.x - z0.x) / z0.s, uy = (st.my - st.base.y - z0.y) / z0.s;
+    applyLiveZoom(LiveTouch.slide, { s, x: now.mx - st.base.x - ux * s, y: now.my - st.base.y - uy * s });
+    e.preventDefault();
+  } else if (LiveTouch.pts.size === 1 && z0.s > 1) {
+    applyLiveZoom(LiveTouch.slide, { s: z0.s, x: z0.x + now.mx - st.mx, y: z0.y + now.my - st.my });
+    e.preventDefault();
+  }
+}, { passive: false });
+
+function liveTouchEnd(e) {
+  if (!LiveTouch.pts.delete(e.pointerId)) return;
+  if (LiveTouch.pts.size && LiveTouch.slide) { liveZoomStart(LiveTouch.slide); return; }   // 한 손가락 남으면 그걸로 이어서 옮기기
+  LiveTouch.slide = null;
+  const bar = document.getElementById('liveInkBar');
+  if (bar && !!bar.querySelector('[data-live="ink-zoom-reset"]') !== liveZoomed()) renderLiveInkBar();
+}
+document.addEventListener('pointerup', liveTouchEnd);
+document.addEventListener('pointercancel', liveTouchEnd);

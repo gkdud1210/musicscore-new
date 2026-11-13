@@ -1337,7 +1337,8 @@ function liveDragTarget(t) {
   if (tab) return V.sets.length > 1 && (V.local || shared) ? { kind: 'set', el: tab.closest('.live-set-wrap') || tab } : null;
   const chip = t.closest('#liveSongs .live-song-chip[data-live="jump"]');
   const set = V.sets[V.cur];
-  if (chip) return set?.songs.length > 1 && (V.local || set.mine || shared) ? { kind: 'song', el: chip.closest('.live-chip-wrap') || chip } : null;
+  // 한 곡뿐이어도 잡을 수 있게 (다른 콘티 탭에 놓아 복사)
+  if (chip) return set?.songs.length && (V.local || set.mine || shared) ? { kind: 'song', el: chip.closest('.live-chip-wrap') || chip } : null;
   return null;
 }
 
@@ -1381,13 +1382,14 @@ function liveFlipMove(row, move) {
 }
 
 /** 놓으면 실루엣이 새 자리로 쏙 들어간 뒤 사라진다 */
-function liveDragDrop(done) {
-  const g = LiveDrag.ghost, el = LiveDrag.el;
+function liveDragDrop(done, into = null) {
+  const g = LiveDrag.ghost, el = into || LiveDrag.el;
   LiveDrag.ghost = null;
   if (!g || !el?.isConnected) { g?.remove(); done(); return; }
   const r = el.getBoundingClientRect();
   g.classList.remove('lifted');
   g.classList.add('dropping');
+  if (into) g.classList.add('into');   // 콘티 탭 속으로 쏙 빨려 들어가듯 (작아지며)
   g.style.translate = `${r.left - parseFloat(g.style.left)}px ${r.top - parseFloat(g.style.top)}px`;
   let fin = false;
   const end = () => { if (fin) return; fin = true; g.remove(); done(); };
@@ -1400,6 +1402,7 @@ function liveDragEnd() {
   LiveDrag.ghost?.remove();
   LiveDrag.ghost = null;
   LiveDrag.el?.classList.remove('dragging');
+  liveDropTab(null);
   document.getElementById('liveViewer')?.classList.remove('reordering');
   const was = LiveDrag.active ? LiveDrag.kind : null;
   LiveDrag.active = false;
@@ -1431,6 +1434,13 @@ document.addEventListener('pointermove', e => {
   liveDragFollow(e.clientX, e.clientY);
   const el = LiveDrag.el;
   const row = el.parentElement;
+  // 📄 악보를 위 콘티 탭에 갖다 대면: 그 콘티에 복사할 준비 (탭이 빛남)
+  if (LiveDrag.kind === 'song') {
+    const tab = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('#liveSets .live-set-tab:not(.add)');
+    const ti = tab ? Number(tab.dataset.set) : -1;
+    liveDropTab(ti >= 0 && ti !== LiveState.viewing.cur ? tab : null);
+    if (tab) return;
+  }
   // 악보 이름 줄은 옆으로 넘치니 가장자리에 가면 저절로 밀기
   const rr = row.getBoundingClientRect();
   if (e.clientX < rr.left + 36) row.scrollLeft -= 12;
@@ -1461,12 +1471,50 @@ document.addEventListener('pointerup', () => {
   const kind = LiveDrag.kind;
   LiveDrag.dropped = Date.now();   // 놓을 때 생기는 클릭은 무시
   LiveDrag.active = false;
+  const tab = LiveDrag.dropTab;
+  const si = Number((LiveDrag.el?.querySelector('[data-live="jump"]') || LiveDrag.el)?.dataset.song);
   liveDragDrop(() => {
     LiveDrag.active = true;
     liveDragEnd();
-    if (kind === 'set') commitLiveSetOrder(); else commitLiveSongOrder();
-  });
+    if (tab) copyLiveSongTo(si, Number(tab.dataset.set));
+    else if (kind === 'set') commitLiveSetOrder(); else commitLiveSongOrder();
+  }, tab);
 });
+
+/** 끌고 있는 악보를 놓을 콘티 탭 표시 */
+function liveDropTab(tab) {
+  if (LiveDrag.dropTab === tab) return;
+  LiveDrag.dropTab?.classList.remove('drop-target');
+  LiveDrag.dropTab = tab;
+  tab?.classList.add('drop-target');
+  if (tab) navigator.vibrate?.(10);
+}
+
+/** 📄 악보 복사: 보고 있는 콘티의 si 번째 악보를 ti 번째 콘티 맨 뒤에. 함께 보는 라이브면 모두의 화면에, 내 화면에만 더한 콘티·혼자 보기는 내 화면에서만 */
+async function copyLiveSongTo(si, ti) {
+  const V = LiveState.viewing;
+  const song = V?.sets[V.cur]?.songs[si];
+  const target = V?.sets[ti];
+  if (!song || !target) { renderLiveSet(); return; }
+  if (target.mine || V.local) {
+    target.songs = [...target.songs, { ...song }];
+    renderLiveSet();   // 끌면서 바뀐 순서는 되돌리고, 탭의 곡 수는 새로
+    showToast(`📄 "${song.title}"을(를) "${target.title}"에 복사했어요 (내 화면에서만).`, 'success', 3000);
+    return;
+  }
+  if (!LiveState.live?.can_edit) { renderLiveSet(); showToast('입장한 사람만 라이브 콘티에 넣을 수 있어요.', 'info'); return; }
+  try {
+    const { live } = await apiJson(`/api/live/sets/${encodeURIComponent(target.key)}/copy-song`,
+      jsonBody('POST', song.id ? { song_id: song.id } : { url: song.image_urls[0] || '' }));
+    LiveState.live = live;
+    syncLiveViewerQuiet(live);
+    renderLiveSet();
+    showToast(`📄 "${song.title}"을(를) "${target.title}" 맨 뒤에 복사했어요. 모두의 화면에서 같이 보여요.`, 'success', 3500);
+  } catch (e) {
+    renderLiveSet();
+    showToast('악보 복사 실패: ' + e.message, 'error');
+  }
+}
 
 async function commitLiveSetOrder() {
   const V = LiveState.viewing;

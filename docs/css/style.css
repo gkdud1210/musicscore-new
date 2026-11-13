@@ -2687,3 +2687,19 @@ html[data-theme="light"] .live-ink-sep { background: #d5d7e0; }
 .live-ink-width b { min-width: 26px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 html[data-theme="light"] .live-ink-width { color: #111; }
 @media (max-width: 600px) { .live-ink-width input { width: 90px; } }
+/* ⠿ 도구 창 옮기기 · ✋ 손바닥 확대 */
+.live-ink-grip { cursor: grab; touch-action: none; user-select: none; font-size: 20px; line-height: 36px; padding: 0 6px; color: #9a9aaa; }
+.live-ink-bar.moving { opacity: .85; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+.live-ink-bar.moving .live-ink-grip { cursor: grabbing; }
+.live-viewer.inking.hand .live-ink { pointer-events: none; }
+.live-viewer.inking.hand .live-track:not(.vertical) .live-slide { touch-action: pan-x; }
+.live-viewer.inking.hand .live-track.vertical .live-slide { touch-action: pan-y; }
+.live-viewer.inking.hand .live-slide.zoomed { touch-action: none; }
+.live-slide.zoomed { overflow: hidden; }
+.live-slide.zoomed img, .live-slide.zoomed .live-ink { will-change: transform; }
+html[data-theme="light"] .live-ink-grip { color: #888; }
+/* 📄 악보를 콘티 탭에 갖다 대면: 탭이 빛나고, 놓으면 실루엣이 탭 속으로 쏙 */
+.live-set-tab.drop-target { background: #22c55e !important; border-color: #22c55e !important; color: #fff !important; transform: scale(1.08);
+  box-shadow: 0 0 0 3px rgba(34,197,94,.35); transition: transform .12s ease, box-shadow .12s ease; }
+.live-set-tab.drop-target::after { content: ' ＋'; font-weight: 800; }
+.live-drag-ghost.dropping.into { scale: .3; opacity: 0; }

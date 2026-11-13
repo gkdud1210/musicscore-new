@@ -1348,7 +1348,41 @@ function api_replace_live_song($key): array
         if (($live['focus']['key'] ?? null) === $key && (int)$live['focus']['song'] > $j) $live['focus']['song'] += count($new) - 1;
         return $live;
     });
-    if (preg_match('#^/api/live/photo/([a-z0-9-]+)\.jpg$#', $url, $m)) @unlink(DATA_DIR . "/live/{$m[1]}.jpg");
+    live_photo_unlink_unused($live, $url);
+    return ['live' => live_public($live)];
+}
+
+/** 붙여넣은 사진 파일은 라이브의 어느 콘티에서도 더 안 쓰일 때만 지운다 (다른 콘티로 복사해 둔 것이 있으면 남김) */
+function live_photo_unlink_unused(?array $live, string $url): void
+{
+    if (!preg_match('#^/api/live/photo/([a-z0-9-]+)\.jpg$#', $url, $m)) return;
+    foreach ($live['sets'] ?? [] as $st) foreach ($st['songs'] as $s) if (in_array($url, $s['image_urls'] ?? [], true)) return;
+    @unlink(DATA_DIR . "/live/{$m[1]}.jpg");
+}
+
+/** 📄 악보를 꾹 눌러 다른 콘티 탭에 놓으면: 그 콘티 맨 뒤에 복사해서 넣는다 (곡은 song_id, 붙여넣은 사진은 그 사진 주소로) */
+function api_copy_live_song($key): array
+{
+    $key = (string)$key;
+    $b = body_json();
+    $songId = (int)($b['song_id'] ?? 0);
+    $url = (string)($b['url'] ?? '');
+    $new = $songId ? live_songs_for([$songId], sheet_of_map()) : [];
+    if ($songId && !$new) throw new ApiError(404, '없는 악보예요');
+    $live = live_update(function (?array $live) use ($key, $url, $new) {
+        $live = live_require_editor($live);
+        $i = array_search($key, array_column($live['sets'], 'key'), true);
+        if ($i === false) throw new ApiError(404, '라이브에 없는 콘티예요');
+        if (!$new) {   // 붙여넣은 사진: 라이브에 있는 그 사진을 그대로
+            foreach ($live['sets'] as $st) foreach ($st['songs'] as $s) {
+                if (!$new && empty($s['id']) && ($s['image_urls'][0] ?? '') === $url && $url !== '') $new = [$s];
+            }
+            if (!$new) throw new ApiError(404, '라이브에서 그 사진이 빠졌어요');
+        }
+        if (count($live['sets'][$i]['songs']) >= 80) throw new ApiError(400, '한 콘티에 80곡까지 넣을 수 있어요');
+        array_push($live['sets'][$i]['songs'], ...$new);
+        return $live;
+    });
     return ['live' => live_public($live)];
 }
 
@@ -1499,9 +1533,7 @@ function api_remove_live_song($key): array
         }
         return $live;
     });
-    foreach ($removed['image_urls'] ?? [] as $u) {
-        if (preg_match('#^/api/live/photo/([a-z0-9-]+)\.jpg$#', $u, $m)) @unlink(DATA_DIR . "/live/{$m[1]}.jpg");
-    }
+    foreach ($removed['image_urls'] ?? [] as $u) live_photo_unlink_unused($live, $u);
     return ['live' => live_public($live)];
 }
 
