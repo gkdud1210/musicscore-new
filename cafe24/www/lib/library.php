@@ -1336,6 +1336,29 @@ function api_order_live_songs($key): array
     return ['live' => live_public($live)];
 }
 
+/** 📥 붙여넣은 사진을 악보로 저장한 뒤: 라이브의 그 사진 자리를 새 악보(곡들)로 바꾼다 (필기·담기가 되게) */
+function api_replace_live_song($key): array
+{
+    $key = (string)$key;
+    $b = body_json();
+    $url = (string)($b['url'] ?? '');
+    $new = live_songs_for((array)($b['song_ids'] ?? []), sheet_of_map());
+    if (!$new) throw new ApiError(400, '바꿀 악보가 없어요');
+    $live = live_update(function (?array $live) use ($key, $url, $new) {
+        $live = live_require_editor($live);
+        $i = array_search($key, array_column($live['sets'], 'key'), true);
+        if ($i === false) throw new ApiError(404, '라이브에 없는 콘티예요');
+        $j = null;
+        foreach ($live['sets'][$i]['songs'] as $k => $s) if (($s['image_urls'][0] ?? '') === $url) { $j = $k; break; }
+        if ($j === null) throw new ApiError(404, '라이브에서 그 사진이 빠졌어요');
+        array_splice($live['sets'][$i]['songs'], $j, 1, $new);
+        if (($live['focus']['key'] ?? null) === $key && (int)$live['focus']['song'] > $j) $live['focus']['song'] += count($new) - 1;
+        return $live;
+    });
+    if (preg_match('#^/api/live/photo/([a-z0-9-]+)\.jpg$#', $url, $m)) @unlink(DATA_DIR . "/live/{$m[1]}.jpg");
+    return ['live' => live_public($live)];
+}
+
 function live_invite_now(): array
 {
     return ['ts' => (int)(microtime(true) * 1000), 'from' => sender_name()];

@@ -10,7 +10,7 @@ const LiveInk = {
   on: false,
   tool: 'pen',            // pen | highlighter | eraser
   color: { pen: '#ff3b30', highlighter: '#ffe600' },
-  width: { pen: 8, highlighter: 24, eraser: 16 },   // 1~60 (annotate.js 와 같은 눈금)
+  width: { pen: 8, highlighter: 40, eraser: 20 },   // 1~200 (annotate.js 와 같은 눈금: 값 / 2000 × 쪽 폭). 형광펜은 아주 굵게도
   cache: new Map(),       // 'scoreId/page' → { strokes, at, redo }
   saveTimers: new Map(),
   drawing: null,          // { key, canvas, stroke }
@@ -20,7 +20,7 @@ const LIVE_INK_COLORS = {
   pen: [['#ff3b30', '빨강'], ['#111118', '검정'], ['#2f6fed', '파랑'], ['#22c55e', '초록']],
   highlighter: [['#ffe600', '노랑'], ['#7cff4f', '연두'], ['#4fd8ff', '하늘'], ['#ff6ec7', '분홍']],
 };
-const LIVE_INK_WIDTHS = [[4, '가늘게'], [8, '보통'], [16, '굵게']];
+const LIVE_INK_MAX = 200;
 
 (function loadLiveInkPrefs() {
   try {
@@ -121,7 +121,7 @@ const liveInkPoint = (e, canvas) => {
   const r = canvas.getBoundingClientRect();
   return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
 };
-const liveInkRatio = () => Math.min(Math.max(LiveInk.width[LiveInk.tool] || 8, 1), 60) / 2000;
+const liveInkRatio = () => Math.min(Math.max(LiveInk.width[LiveInk.tool] || 8, 1), LIVE_INK_MAX) / 2000;
 
 function liveInkDown(e) {
   if (!LiveInk.on || LiveInk.drawing || (e.pointerType === 'touch' && !e.isPrimary)) return;
@@ -248,14 +248,41 @@ function renderLiveInkBar() {
   const tool = (k, label) => `<button type="button" class="live-ink-btn${t === k ? ' on' : ''}" data-live="ink-tool" data-tool="${k}">${label}</button>`;
   const colors = (LIVE_INK_COLORS[t] || []).map(([c, name]) =>
     `<button type="button" class="live-ink-color${LiveInk.color[t] === c ? ' on' : ''}" data-live="ink-color" data-color="${c}" style="background:${c}" title="${name}" aria-label="${name}"></button>`).join('');
-  const widths = LIVE_INK_WIDTHS.map(([w, name]) =>
-    `<button type="button" class="live-ink-btn w${LiveInk.width[t] === w ? ' on' : ''}" data-live="ink-width" data-w="${w}" title="${name}" aria-label="${name}"><i style="width:${Math.max(3, w / 2 + 2)}px;height:${Math.max(3, w / 2 + 2)}px"></i></button>`).join('');
+  const w = LiveInk.width[t];
+  const widths = `<label class="live-ink-width" title="굵기 (1~${LIVE_INK_MAX})">
+      <input type="range" id="liveInkWidth" min="1" max="${LIVE_INK_MAX}" step="1" value="${w}" aria-label="굵기" />
+      <span class="live-ink-prev" id="liveInkPrev"><i></i></span><b id="liveInkWval">${w}</b></label>`;
   bar.innerHTML = `${tool('pen', '🖊️')}${tool('highlighter', '🖍️')}${tool('eraser', '🧽')}
     <span class="live-ink-sep"></span>${t === 'eraser' ? '' : colors}${t === 'eraser' ? '' : '<span class="live-ink-sep"></span>'}${widths}
     <span class="live-ink-sep"></span>
     <button type="button" class="live-ink-btn" data-live="ink-undo" title="되돌리기" aria-label="되돌리기">↩️</button>
     <button type="button" class="live-ink-btn" data-live="ink-redo" title="다시 하기" aria-label="다시 하기">↪️</button>
     <button type="button" class="live-ink-btn done" data-live="ink">완료</button>`;
+  const range = bar.querySelector('#liveInkWidth');
+  range.addEventListener('input', () => {
+    LiveInk.width[LiveInk.tool] = Number(range.value);
+    bar.querySelector('#liveInkWval').textContent = range.value;
+    updateLiveInkPreview();
+  });
+  range.addEventListener('change', saveLiveInkPrefs);
+  updateLiveInkPreview();
+}
+
+/** 굵기 미리보기: 지금 보는 악보에서 실제로 그려질 굵기 그대로 (칸보다 크면 칸에 맞춰) */
+function updateLiveInkPreview() {
+  const dot = document.querySelector('#liveInkPrev i');
+  if (!dot) return;
+  const t = LiveInk.tool;
+  const cv = document.querySelector(`#liveTrack canvas.live-ink[data-key="${curLiveInkKey()}"]`) || document.querySelector('#liveTrack canvas.live-ink');
+  const cssW = cv?.getBoundingClientRect().width || 600;
+  const px = Math.min(Math.max(liveInkRatio() * cssW, 2), 30);
+  Object.assign(dot.style, {
+    width: px + 'px', height: (t === 'highlighter' ? Math.max(px * 0.6, 2) : px) + 'px',
+    borderRadius: t === 'highlighter' ? '3px' : '50%',
+    background: t === 'eraser' ? 'transparent' : LiveInk.color[t],
+    border: t === 'eraser' ? '1px dashed currentColor' : '0',
+    opacity: t === 'highlighter' ? '0.5' : '1',
+  });
 }
 
 /** live.js 의 버튼 처리에서 넘겨받는다. 처리했으면 true */
@@ -264,7 +291,6 @@ function liveInkAction(act, el) {
     case 'ink': toggleLiveInk(); return true;
     case 'ink-tool': LiveInk.tool = el.dataset.tool; break;
     case 'ink-color': LiveInk.color[LiveInk.tool] = el.dataset.color; break;
-    case 'ink-width': LiveInk.width[LiveInk.tool] = Number(el.dataset.w); break;
     case 'ink-undo': liveInkUndo(); return true;
     case 'ink-redo': liveInkUndo(true); return true;
     default: return false;

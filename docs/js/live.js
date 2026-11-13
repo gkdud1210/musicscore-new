@@ -266,6 +266,42 @@ async function removeLiveSong(si) {
   }
 }
 
+/** 📥 붙여넣은 사진 한 장을 바로 악보로: 콘티 목록에 저장(AI가 제목·키를 읽음) → 라이브의 그 사진 자리가 새 악보로 바뀐다 */
+async function livePhotoToScore(si) {
+  const V = LiveState.viewing;
+  const set = V?.sets[V.cur];
+  const photo = set?.songs[si];
+  const url = photo?.image_urls[0];
+  if (!url || photo.id || LiveState.savingPhotos) return;
+  LiveState.savingPhotos = true;
+  const progress = t => showToast(`📥 ${t}...`, 'info', 4000);
+  try {
+    progress('사진 가져오는 중');
+    const res = await fetch(`${API_BASE}${url}`);
+    if (!res.ok) throw new Error('사진을 못 가져왔어요 (지난 사진은 하루 뒤에 지워져요)');
+    const file = new File([await res.blob()], 'photo.jpg', { type: 'image/jpeg' });
+    let conti = await clientUploadImages([file], photo.title || '붙여넣은 사진', progress);
+    if (!conti.duplicate && conti.status === 'processing') conti = await waitForAnalysis(conti, progress);
+    if (conti.status === 'error') throw new Error(conti.status_detail || '분석 실패');
+    const songs = (await apiJson(`/api/songs?score_id=${conti.id}`)).sort((a, b) => a.page_start - b.page_start);
+    if (!songs.length) throw new Error('악보로 나누지 못했어요');
+    const at = liveIndex();
+    const { live } = await apiJson(`/api/live/sets/${encodeURIComponent(set.key)}/replace-song`,
+      jsonBody('POST', { url, song_ids: songs.map(s => s.id) }));
+    LiveState.live = live;
+    syncLiveViewerQuiet(live);
+    if (V.sets[V.cur]?.key === set.key) V.pos[set.key] = at;
+    renderLiveSet();
+    const names = songs.map(s => `"${s.title}"${s.key ? ` (${s.key})` : ''}`).join(', ');
+    showToast(`📥 악보로 저장했어요: ${names}${conti.duplicate ? ' — 이미 있던 악보예요' : ''}. 이제 ✍️ 필기도 돼요. 제목·키는 콘티 화면에서 고칠 수 있어요.`, 'success', 7000);
+    if (typeof refreshAll === 'function') refreshAll().catch(() => {});
+  } catch (e) {
+    showToast('악보로 저장 실패: ' + e.message, 'error');
+  } finally {
+    LiveState.savingPhotos = false;
+  }
+}
+
 async function saveLivePhotosAsConti() {
   const set = LiveState.viewing?.sets.find(st => st.key === LIVE_PASTE_KEY);
   const urls = (set?.songs || []).flatMap(s => s.image_urls);
@@ -589,6 +625,7 @@ function renderLiveSet() {
   const live = LiveState.live;
   const server = !V.local && live && live.id === V.id;
   const songX = canRemoveLiveSong(set);   // 악보 이름 옆 ✕ 로 빼기
+  const photoSave = server && set.key === LIVE_PASTE_KEY && live.can_edit && AuthState.canEdit && typeof clientUploadImages === 'function';   // 📥 사진 → 악보
   v.classList.toggle('top-min', liveTopMin());
   v.innerHTML = `
     <div class="live-top">
@@ -613,8 +650,11 @@ function renderLiveSet() {
       ${set.songs.map((s, i) => {
         const chip = `<button type="button" class="live-song-chip" data-live="jump" data-song="${i}">
         ${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</button>`;
-        return songX ? `<span class="live-chip-wrap">${chip}<button type="button" class="live-chip-x" data-live="song-x" data-song="${i}"
-          title="${set.mine || V.local ? '이 악보 빼기 (내 화면에서만)' : '이 악보 빼기 (모두의 화면에서 빠져요)'}" aria-label="${escapeHtml(s.title)} 빼기">✕</button></span>` : chip;
+        const save = photoSave && !s.id ? `<button type="button" class="live-chip-save" data-live="photo-score" data-song="${i}"
+          title="이 사진을 악보로 저장해요 (AI가 제목·키를 읽고, 라이브에서도 바로 악보로 바뀌어요)" aria-label="${escapeHtml(s.title)} 악보로 저장">📥 악보로</button>` : '';
+        const x = songX ? `<button type="button" class="live-chip-x" data-live="song-x" data-song="${i}"
+          title="${set.mine || V.local ? '이 악보 빼기 (내 화면에서만)' : '이 악보 빼기 (모두의 화면에서 빠져요)'}" aria-label="${escapeHtml(s.title)} 빼기">✕</button>` : '';
+        return save || x ? `<span class="live-chip-wrap">${chip}${save}${x}</span>` : chip;
       }).join('')}
     </div>
     <div class="live-track${liveVertical() ? ' vertical' : ''}" id="liveTrack">
@@ -1224,6 +1264,7 @@ document.addEventListener('click', e => {
     case 'notify': notifyLive(); break;
     case 'paste': pickLivePhoto(); break;
     case 'song-x': removeLiveSong(Number(el.dataset.song)); break;
+    case 'photo-score': livePhotoToScore(Number(el.dataset.song)); break;
     case 'to-setlist': liveSetToSetlist(); break;
     case 'dismiss':
       if (LiveState.live) { setLiveSeen(LiveState.live.id); setFocusSeen(LiveState.live); setInviteSeen(LiveState.live); }
@@ -1300,8 +1341,64 @@ function liveDragTarget(t) {
   return null;
 }
 
+/** 꾹 누르면 그 이름의 실루엣(그림자 모형)이 떠올라 손가락을 따라온다. 원래 자리는 점선 빈칸으로 */
+function liveDragLift(el, x, y) {
+  const r = el.getBoundingClientRect();
+  const g = el.cloneNode(true);
+  g.classList.add('live-drag-ghost');
+  g.removeAttribute('id');
+  g.querySelectorAll('[data-live]').forEach(b => b.removeAttribute('data-live'));
+  Object.assign(g.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+  document.body.appendChild(g);
+  LiveDrag.ghost = g;
+  LiveDrag.dx = x - r.left;   // 손가락이 잡은 자리 그대로 따라오게
+  LiveDrag.dy = y - r.top;
+  requestAnimationFrame(() => g.classList.add('lifted'));
+  el.classList.add('dragging');
+}
+
+function liveDragFollow(x, y) {
+  const g = LiveDrag.ghost;
+  if (g) g.style.translate = `${x - LiveDrag.dx - parseFloat(g.style.left)}px ${y - LiveDrag.dy - parseFloat(g.style.top)}px`;
+}
+
+/** 순서가 바뀔 때 옆의 이름들이 미끄러지듯 자리를 옮기게 (FLIP) */
+function liveFlipMove(row, move) {
+  const kids = [...row.children].filter(k => !k.classList.contains('dragging'));
+  const before = new Map(kids.map(k => [k, k.getBoundingClientRect()]));
+  move();
+  kids.forEach(k => {
+    const a = before.get(k), b = k.getBoundingClientRect();
+    const dx = a.left - b.left, dy = a.top - b.top;
+    if (!dx && !dy) return;
+    k.style.transition = 'none';
+    k.style.transform = `translate(${dx}px, ${dy}px)`;
+    k.getBoundingClientRect();   // 그 자리에서 출발
+    k.style.transition = 'transform .2s cubic-bezier(.2, .8, .2, 1)';
+    k.style.transform = '';
+    k.addEventListener('transitionend', () => { k.style.transition = ''; }, { once: true });
+  });
+}
+
+/** 놓으면 실루엣이 새 자리로 쏙 들어간 뒤 사라진다 */
+function liveDragDrop(done) {
+  const g = LiveDrag.ghost, el = LiveDrag.el;
+  LiveDrag.ghost = null;
+  if (!g || !el?.isConnected) { g?.remove(); done(); return; }
+  const r = el.getBoundingClientRect();
+  g.classList.remove('lifted');
+  g.classList.add('dropping');
+  g.style.translate = `${r.left - parseFloat(g.style.left)}px ${r.top - parseFloat(g.style.top)}px`;
+  let fin = false;
+  const end = () => { if (fin) return; fin = true; g.remove(); done(); };
+  g.addEventListener('transitionend', end, { once: true });
+  setTimeout(end, 260);
+}
+
 function liveDragEnd() {
   clearTimeout(LiveDrag.timer);
+  LiveDrag.ghost?.remove();
+  LiveDrag.ghost = null;
   LiveDrag.el?.classList.remove('dragging');
   document.getElementById('liveViewer')?.classList.remove('reordering');
   const was = LiveDrag.active ? LiveDrag.kind : null;
@@ -1318,7 +1415,7 @@ document.addEventListener('pointerdown', e => {
   Object.assign(LiveDrag, { kind: hit.kind, el: hit.el, x: e.clientX, y: e.clientY });
   LiveDrag.timer = setTimeout(() => {
     LiveDrag.active = true;
-    hit.el.classList.add('dragging');
+    liveDragLift(hit.el, LiveDrag.x, LiveDrag.y);
     document.getElementById('liveViewer')?.classList.add('reordering');
     navigator.vibrate?.(25);
   }, 380);
@@ -1331,16 +1428,26 @@ document.addEventListener('pointermove', e => {
     return;
   }
   e.preventDefault();
+  liveDragFollow(e.clientX, e.clientY);
   const el = LiveDrag.el;
   const row = el.parentElement;
   // 악보 이름 줄은 옆으로 넘치니 가장자리에 가면 저절로 밀기
   const rr = row.getBoundingClientRect();
   if (e.clientX < rr.left + 36) row.scrollLeft -= 12;
   else if (e.clientX > rr.right - 36) row.scrollLeft += 12;
-  const over = liveDragTarget(document.elementFromPoint(e.clientX, e.clientY));
-  if (!over || over.kind !== LiveDrag.kind || over.el === el || over.el.parentElement !== row) return;
-  const r = over.el.getBoundingClientRect();
-  row.insertBefore(el, e.clientX < r.left + r.width / 2 ? over.el : over.el.nextSibling);
+  // 손가락에서 가장 가까운 이름 (줄 위아래로 조금 벗어나도)
+  let over = null, best = 60;
+  [...row.children].forEach(k => {
+    if (k === el || liveDragTarget(k.querySelector('.live-set-tab, .live-song-chip') || k)?.el !== k) return;
+    const r = k.getBoundingClientRect();
+    const dx = Math.max(r.left - e.clientX, 0, e.clientX - r.right), dy = Math.max(r.top - e.clientY, 0, e.clientY - r.bottom);
+    if (dx + dy * 2 < best) { best = dx + dy * 2; over = k; }
+  });
+  if (!over) return;
+  const r = over.getBoundingClientRect();
+  const ref = e.clientX < r.left + r.width / 2 ? over : over.nextSibling;
+  if (ref === el || ref === el.nextSibling) return;   // 이미 그 자리
+  liveFlipMove(row, () => row.insertBefore(el, ref));
 }, { passive: false });
 
 // 끄는 동안 화면이 스크롤되거나 길게 누르기 메뉴가 뜨지 않게
@@ -1350,10 +1457,15 @@ document.addEventListener('contextmenu', e => {
 });
 document.addEventListener('pointercancel', () => { if (!LiveDrag.active) liveDragEnd(); });
 document.addEventListener('pointerup', () => {
-  const kind = liveDragEnd();
-  if (!kind) return;
+  if (!LiveDrag.active) { liveDragEnd(); return; }
+  const kind = LiveDrag.kind;
   LiveDrag.dropped = Date.now();   // 놓을 때 생기는 클릭은 무시
-  if (kind === 'set') commitLiveSetOrder(); else commitLiveSongOrder();
+  LiveDrag.active = false;
+  liveDragDrop(() => {
+    LiveDrag.active = true;
+    liveDragEnd();
+    if (kind === 'set') commitLiveSetOrder(); else commitLiveSongOrder();
+  });
 });
 
 async function commitLiveSetOrder() {

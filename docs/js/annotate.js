@@ -18,7 +18,7 @@ const AnnotateState = {
   dirty: false,
 };
 
-// 펜·형광펜은 색·굵기를 따로 기억한다 (굵기 = 슬라이더 1~60, 선 굵기 = 값 / 2000 × 페이지 폭)
+// 펜·형광펜은 색·굵기를 따로 기억한다 (굵기 = 슬라이더 1~200, 선 굵기 = 값 / 2000 × 페이지 폭)
 const INK_KEY = 'jandi.ink';
 const INK_COLORS = {
   pen: [['#ff3b30', '빨강'], ['#111118', '검정'], ['#2f6fed', '파랑'], ['#22c55e', '초록'], ['#f59e0b', '주황'], ['#a855f7', '보라']],
@@ -30,7 +30,7 @@ const INK_DEFAULT = {
   eraser: { width: 16 },
   finger: true,
 };
-const widthToRatio = v => Math.min(Math.max(Number(v) || 8, 1), 60) / 2000;
+const widthToRatio = v => Math.min(Math.max(Number(v) || 8, 1), 200) / 2000;
 let INK = loadInkPrefs();
 
 function loadInkPrefs() {
@@ -106,7 +106,7 @@ function setColor(color, remember = true) {
 }
 
 function setWidth(v, remember = true) {
-  v = Math.min(Math.max(Math.round(Number(v) || 8), 1), 60);
+  v = Math.min(Math.max(Math.round(Number(v) || 8), 1), 200);
   AnnotateState.widthRatio = widthToRatio(v);
   const range = document.getElementById('widthRange');
   if (range && Number(range.value) !== v) range.value = v;
