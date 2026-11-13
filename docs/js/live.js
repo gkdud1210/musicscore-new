@@ -192,10 +192,39 @@ async function pickLivePhoto() {
 /* ── 붙여넣은 사진 정리: 🗑 지우기(모두의 화면에서) · 💾 콘티로 담기(콘티 목록에 새 콘티로) ─────── */
 const LIVE_PASTE_KEY = 'paste';
 
-function pasteToolsHtml(set) {
-  const live = LiveState.live;
-  return `${live?.can_edit ? '<button type="button" class="live-song-chip paste-tool danger" data-live="photo-del" title="보고 있는 사진을 지워요 (모두의 화면에서 빠져요)">🗑 이 사진 지우기</button>' : ''}
-    ${AuthState.canEdit ? `<button type="button" class="live-song-chip paste-tool" data-live="photo-save" title="붙여넣은 사진들을 콘티 목록에 새 콘티로 저장해요 (AI가 읽어서 곡으로 나눠요)">💾 콘티로 담기 (${set.songs.length}장)</button>` : ''}`;
+function pasteToolsHtml() {
+  return LiveState.live?.can_edit ? '<button type="button" class="live-song-chip paste-tool danger" data-live="photo-del" title="보고 있는 사진을 지워요 (모두의 화면에서 빠져요)">🗑 이 사진 지우기</button>' : '';
+}
+
+/** 🎼 새 콘티에 담기 칩: 보고 있는 콘티의 곡들을 아래 "🎼 담은 곡"(새 콘티)에. 붙여넣은 사진은 관리자만 (먼저 콘티로 저장해야 해서) */
+function toSetlistChipHtml(set) {
+  if (!set?.songs.length || typeof toSetlistItem !== 'function') return '';
+  const photos = set.songs.some(s => !s.id);
+  if (photos && !AuthState.canEdit) return '';
+  return `<button type="button" class="live-song-chip paste-tool" data-live="to-setlist" title="${photos
+    ? '붙여넣은 사진들을 콘티 목록에 저장하고(AI가 곡으로 나눠요) 새 콘티에 담아요'
+    : '이 콘티의 곡들을 새 콘티에 담아요 (라이브를 닫으면 아래 🎼 담은 곡에서 저장·PDF 내보내기)'}">🎼 새 콘티에 담기${photos ? ` (${set.songs.length}장)` : ''}</button>`;
+}
+
+/** 보고 있는 콘티 → 🎼 담은 곡. 붙여넣은 사진은 먼저 콘티 목록에 저장한 뒤 그 곡들을 담는다 */
+async function liveSetToSetlist() {
+  const V = LiveState.viewing;
+  const set = V?.sets[V.cur];
+  if (!set) return;
+  if (set.songs.some(s => !s.id)) {
+    const conti = await saveLivePhotosAsConti();
+    if (conti?.id) await addContiToSetlist(conti.id);
+    return;
+  }
+  let added = 0;
+  for (const s of set.songs) {
+    if (inSetlist(s.id)) continue;
+    LibState.setlist.push(toSetlistItem({ ...s, ...(findSongAnywhere(s.id) || {}) }));
+    added++;
+  }
+  afterSetlistChange();
+  showToast(added ? `🎼 ${added}곡을 새 콘티에 담았어요. 라이브를 닫으면 아래 🎼 담은 곡에서 순서를 바꾸고 저장·PDF로 내보낼 수 있어요.`
+    : '이 콘티의 곡은 이미 다 담겨 있어요.', added ? 'success' : 'info', added ? 6000 : 3000);
 }
 
 /** 보고 있는 사진 → 서버 이름 (/api/live/photo/<name>.jpg) */
@@ -226,12 +255,12 @@ async function deleteLivePhoto() {
 async function saveLivePhotosAsConti() {
   const set = LiveState.viewing?.sets.find(st => st.key === LIVE_PASTE_KEY);
   const urls = (set?.songs || []).flatMap(s => s.image_urls);
-  if (!urls.length || LiveState.savingPhotos) return;
+  if (!urls.length || LiveState.savingPhotos) return null;
   const d = new Date();
   const p = n => String(n).padStart(2, '0');
   const title = prompt(`붙여넣은 사진 ${urls.length}장을 콘티 목록에 새 콘티로 담아요.\nAI가 읽어서 곡으로 나눠요. 콘티 이름:`,
     `붙여넣은 사진 ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`);
-  if (title === null) return;
+  if (title === null) return null;
   LiveState.savingPhotos = true;
   const progress = t => showToast(`💾 ${t}...`, 'info', 4000);
   try {
@@ -242,13 +271,15 @@ async function saveLivePhotosAsConti() {
       return new File([await res.blob()], `p${i + 1}.jpg`, { type: 'image/jpeg' });
     }));
     let conti = await clientUploadImages(files, title.trim() || '붙여넣은 사진', progress);
-    if (conti.duplicate) { showToast(`이미 같은 사진으로 만든 콘티가 있어요: "${conti.title || conti.filename || ''}"`, 'info', 5000); return; }
+    if (conti.duplicate) { showToast(`이미 같은 사진으로 만든 콘티가 있어서 그 콘티를 써요: "${conti.title || conti.filename || ''}"`, 'info', 5000); return conti; }
     if (conti.status === 'processing') conti = await waitForAnalysis(conti, progress);
     if (conti.status === 'error') throw new Error(conti.status_detail || '분석 실패');
     showToast(`💾 콘티 목록에 담았어요 (곡 ${conti.songs?.length || 0}개). 콘티 화면에서 제목·키를 확인해주세요.`, 'success', 6000);
     if (typeof refreshAll === 'function') refreshAll().catch(() => {});
+    return conti;
   } catch (e) {
     showToast('콘티로 담기 실패: ' + e.message, 'error');
+    return null;
   } finally {
     LiveState.savingPhotos = false;
   }
@@ -562,7 +593,7 @@ function renderLiveSet() {
     <div class="live-add hidden" id="liveAdd"></div>
     <div class="live-add live-msg-panel hidden" id="liveMsgPanel"></div>
     <div class="live-songs" id="liveSongs">
-      ${server && set.key === LIVE_PASTE_KEY ? pasteToolsHtml(set) : ''}
+      ${toSetlistChipHtml(set)}${server && set.key === LIVE_PASTE_KEY ? pasteToolsHtml() : ''}
       ${set.songs.map((s, i) => `<button type="button" class="live-song-chip" data-live="jump" data-song="${i}">
         ${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</button>`).join('')}
     </div>
@@ -1168,7 +1199,7 @@ document.addEventListener('click', e => {
     case 'notify': notifyLive(); break;
     case 'paste': pickLivePhoto(); break;
     case 'photo-del': deleteLivePhoto(); break;
-    case 'photo-save': saveLivePhotosAsConti(); break;
+    case 'to-setlist': liveSetToSetlist(); break;
     case 'dismiss':
       if (LiveState.live) { setLiveSeen(LiveState.live.id); setFocusSeen(LiveState.live); setInviteSeen(LiveState.live); }
       hideLiveAlert();
