@@ -391,7 +391,11 @@ function liveTouchInfo() {
 
 function liveZoomStart(slide) {
   LiveTouch.slide = slide;
-  LiveTouch.start = { ...liveTouchInfo(), z: { ...(slide ? zoomOf(slide) : { s: 1, x: 0, y: 0 }) }, base: slide ? liveImgBase(slide) : null, moved: false };
+  const track = document.getElementById('liveTrack');
+  const info = liveTouchInfo();
+  LiveTouch.start = { ...info, z: { ...(slide ? zoomOf(slide) : { s: 1, x: 0, y: 0 }) }, base: slide ? liveImgBase(slide) : null, moved: false,
+    // ↕ 스크롤 보기: 전체 악보 크기 확대·축소의 출발점
+    v: track ? { vz: liveVZoom(), top: track.scrollTop, left: track.scrollLeft, x: info.mx, y: info.my } : null };
 }
 
 /** 손가락으로 확대·축소할 수 있을 때: 라이브 화면에서, 필기 중이면 ✋ 일 때만 (한눈에 보기에서는 언제나) */
@@ -423,6 +427,14 @@ document.addEventListener('pointermove', e => {
         setLiveOverview(level - 1, level === 1 && under ? Number(under.dataset.index) : null);
         liveZoomStart(level === 1 && under ? under : null);
       }
+      return;
+    }
+    // ↕ 스크롤로 볼 때: 악보 전체 크기를 자유롭게 (30%~300%), 그대로 스크롤
+    const track = document.getElementById('liveTrack');
+    if (track?.classList.contains('vertical') && st.v) {
+      const want = st.v.vz * ratio;
+      if (want < LIVE_VZ_MIN * 0.8 && st.v.vz <= LIVE_VZ_MIN + 0.01) { setLiveOverview(1); liveZoomStart(null); return; }   // 제일 작은데 더 오므리면 한눈에 보기
+      setLiveVZoom(want, { x: now.mx, y: now.my }, st.v);
       return;
     }
     const slide = LiveTouch.slide;

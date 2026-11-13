@@ -2763,3 +2763,10 @@ body.conti-reordering #contiSongsWrap { touch-action: none; user-select: none; -
 /* ＋ 곡 추가 (이 콘티 맨 뒤에) */
 .live-song-chip.add-into { border-style: dashed; color: #b9bcff; background: transparent; }
 html[data-theme="light"] .live-song-chip.add-into { color: #4338ca; background: transparent; }
+/* ↕ 스크롤 보기: 두 손가락으로 악보 크기 조절 (--vz: 0.3 ~ 3) */
+.live-track.vertical .live-slide img { width: calc(min(var(--tw, 100%), 1000px) * var(--vz, 1)); max-width: none; }
+.live-track.vertical.vz-wide { overflow-x: auto; touch-action: pan-x pan-y; }
+.live-track.vertical.vz-wide .live-slide { width: max-content; min-width: 100%; }
+.live-track.vertical.vz-small { background: #d9dbe2; }
+.live-track.vertical.vz-small .live-slide { background: transparent; border-bottom-color: transparent; padding: 6px 0; }
+.live-track.vertical.vz-small .live-slide img { box-shadow: 0 2px 10px rgba(0,0,0,.18); background: #fff; }

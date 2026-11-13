@@ -729,6 +729,7 @@ function renderLiveSet() {
   const track = document.getElementById('liveTrack');
   const start = Math.min(V.pos[set.key] || 0, Math.max(0, slides.length - 1));
   applyLiveOverview(track);
+  applyLiveVZoom(track);
   track.addEventListener('click', e => {   // 한눈에 보기에서 악보를 톡 → 그 악보 크게
     const sl = liveOverview() && e.target.closest('.live-slide');
     if (sl) setLiveOverview(0, Number(sl.dataset.index));
@@ -817,6 +818,46 @@ function setTrackPos(i, smooth = false) {
   if (track.classList.contains('vertical')) track.scrollTo({ top: track.children[i]?.offsetTop || 0, behavior });
   else track.scrollTo({ left: i * track.clientWidth, behavior });
 }
+
+/* ── ↕ 스크롤로 볼 때: 두 손가락으로 악보 크기를 자유롭게 (30%~300%), 그 크기 그대로 스크롤 ───────
+ * 손가락 가운데 점이 보던 자리에 그대로 있게 스크롤도 맞춘다. 크기는 기기에 기억. */
+const LIVE_VZ_KEY = 'jandi.live.vz';
+const LIVE_VZ_MIN = 0.3, LIVE_VZ_MAX = 3;
+const liveVZoom = () => Math.min(Math.max(Number(lsGet(LIVE_VZ_KEY)) || 1, LIVE_VZ_MIN), LIVE_VZ_MAX);
+
+function applyLiveVZoom(track = document.getElementById('liveTrack'), vz = liveVZoom()) {
+  if (!track) return;
+  track.style.setProperty('--vz', vz);
+  track.style.setProperty('--tw', track.clientWidth + 'px');   // 화면 폭 기준 (악보 폭이 화면보다 커져도 계산이 돌지 않게)
+  track.classList.toggle('vz-wide', vz > 1.001);
+  track.classList.toggle('vz-small', vz < 0.999);
+}
+
+/** anchor: 화면 좌표 {x, y} — 그 자리의 악보가 손가락 밑에 그대로 있게 */
+function setLiveVZoom(vz, anchor = null, from = null) {
+  const track = document.getElementById('liveTrack');
+  if (!track) return;
+  vz = Math.min(Math.max(vz, LIVE_VZ_MIN), LIVE_VZ_MAX);
+  const r = track.getBoundingClientRect();
+  const st = from || { vz: liveVZoom(), top: track.scrollTop, left: track.scrollLeft, x: anchor?.x ?? r.left + r.width / 2, y: anchor?.y ?? r.top };
+  const ax = anchor?.x ?? st.x, ay = anchor?.y ?? st.y;
+  const k = vz / st.vz;
+  applyLiveVZoom(track, vz);
+  track.scrollTop = (st.top + (st.y - r.top)) * k - (ay - r.top);
+  track.scrollLeft = vz > 1.001 ? (st.left + (st.x - r.left)) * k - (ax - r.left) : 0;
+  lsSet(LIVE_VZ_KEY, Math.round(vz * 100) / 100);
+  cancelAnimationFrame(LiveState.vzRaf);
+  LiveState.vzRaf = requestAnimationFrame(() => { if (typeof relayoutLiveInk === 'function') relayoutLiveInk(); updateLiveNow(); });
+}
+
+// 맥 트랙패드 두 손가락 오므리기·벌리기 (브라우저는 Ctrl+휠로 보낸다)
+document.addEventListener('wheel', e => {
+  if (!e.ctrlKey || !LiveState.viewerOpen) return;
+  const track = e.target.closest?.('#liveTrack');
+  if (!track) return;
+  e.preventDefault();
+  if (track.classList.contains('vertical') && !liveOverview()) setLiveVZoom(liveVZoom() * Math.exp(-e.deltaY * 0.01), { x: e.clientX, y: e.clientY });
+}, { passive: false });
 
 /* ── 🔍 두 손가락으로 오므리면 악보들이 작아져서 한눈에 (2·3·4·6칸), 벌리면 다시 크게 ───────
  * 제스처는 live-ink.js 에서. 고른 칸 수는 콘티를 바꿔도 그대로, 라이브 화면을 닫으면 원래대로. */
@@ -1798,6 +1839,7 @@ async function commitLiveSongOrder() {
 })();
 
 window.addEventListener('resize', () => {
+  if (LiveState.viewerOpen) applyLiveVZoom();
   if (LiveState.viewerOpen) {
     const t = document.getElementById('liveTrack');
     const V = LiveState.viewing;
