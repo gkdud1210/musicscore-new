@@ -348,7 +348,7 @@ function openLeaveChoice() {
   el.id = 'liveLeaveSheet';
   el.className = 'live-leave-sheet';
   el.innerHTML = `<div class="live-leave-box" role="dialog" aria-modal="true" aria-label="라이브 나가기">
-    <p class="live-leave-title">내가 시작한 라이브예요</p>
+    <p class="live-leave-title">${LiveState.live?.mine ? '내가 시작한 라이브예요' : '라이브 나가기'}</p>
     <button type="button" class="live-leave-btn" data-live="leave-only">🚪 나만 나가기 <small>라이브는 다른 사람들에게 계속돼요</small></button>
     <button type="button" class="live-leave-btn end" data-live="stop-now">■ 라이브 끝내기 <small>모든 사람의 라이브 화면이 닫혀요</small></button>
     <button type="button" class="live-leave-cancel" data-live="leave-cancel">취소</button>
@@ -357,9 +357,9 @@ function openLeaveChoice() {
   (document.fullscreenElement || document.getElementById('liveViewer') || document.body).appendChild(el);
 }
 
-async function stopLive() {
+async function stopLive(asked = false) {
   document.getElementById('liveLeaveSheet')?.remove();
-  if (!confirm('라이브를 종료하시겠습니까?\n모든 사람의 라이브 화면이 닫혀요.')) return;
+  if (!asked && !confirm('라이브를 종료하시겠습니까?\n모든 사람의 라이브 화면이 닫혀요.')) return;
   try {
     await apiJson('/api/live', { method: 'DELETE' });
     LiveState.live = null;
@@ -638,8 +638,7 @@ function renderLiveSet() {
       <button type="button" class="live-top-btn" data-live="scroll-mode" title="${liveVertical() ? '옆으로 넘기기로 바꾸기' : '밑으로 스크롤로 바꾸기'}">${liveVertical() ? '↕ 스크롤' : '↔ 넘기기'}</button>
       <button type="button" class="live-top-btn" data-live="fullscreen" title="전체 화면">⛶</button>
       ${!server ? '<button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>'
-        : `<button type="button" class="live-top-btn" data-live="leave" title="내 화면만 닫아요. 라이브는 다른 사람들에게 계속돼요">🚪 나가기</button>
-          <button type="button" class="live-top-btn end" data-live="stop" title="라이브 종료 (모두의 라이브 화면이 닫혀요)">■ 종료</button>`}
+        : '<button type="button" class="live-top-btn" data-live="leave" title="나만 나가기 · 라이브 끝내기">🚪 나가기</button>'}
       <button type="button" class="live-top-btn top-fold" data-live="top-fold" title="${liveTopMin() ? '버튼 줄 펼치기' : '버튼 줄 접기'}" aria-label="${liveTopMin() ? '버튼 줄 펼치기' : '버튼 줄 접기'}">${liveTopMin() ? '▾' : '▴'}</button>
     </div>
     <div class="live-sets" id="liveSets" role="tablist" aria-label="콘티"></div>
@@ -1286,8 +1285,8 @@ document.addEventListener('click', e => {
     case 'ind-expand': setLiveIndMinimized(false); break;
     case 'scroll-mode': toggleLiveScrollMode(); break;
     case 'invite': inviteLive(); break;
-    case 'leave':
-      if (LiveState.live?.mine && LiveState.viewerOpen && !LiveState.viewing?.local) openLeaveChoice();
+    case 'leave':   // 🚪 나가기 안에 ■ 라이브 끝내기도
+      if (LiveState.live && LiveState.viewerOpen && !LiveState.viewing?.local) openLeaveChoice();
       else leaveLive();
       break;
     case 'leave-only': document.getElementById('liveLeaveSheet')?.remove(); leaveLive(); break;
@@ -1323,7 +1322,7 @@ document.addEventListener('click', e => {
       break;
     case 'close': closeLiveViewer(); break;
     case 'stop': stopLive(); break;
-    case 'stop-now': stopLive(); break;
+    case 'stop-now': stopLive(true); break;   // 나가기 창에서 고른 것 = 이미 물어봄
     case 'prev': stepLive(-1); break;
     case 'next': stepLive(1); break;
     case 'set': switchLiveSet(Number(el.dataset.set)); break;
