@@ -1406,6 +1406,34 @@ function api_live_photo(): array
 
 function api_live_photo_image(string $name): void { send_image(DATA_DIR . "/live/$name.jpg"); }
 
+/** 🗑 붙여넣은 사진 한 장 지우기 (모두의 화면에서 빠진다). 다 지우면 "붙여넣은 사진" 콘티도 빠진다 */
+function api_delete_live_photo(string $name): array
+{
+    $url = "/api/live/photo/$name.jpg";
+    $live = live_update(function (?array $live) use ($url) {
+        $live = live_require_editor($live);
+        $i = array_search(LIVE_PASTE_KEY, array_column($live['sets'], 'key'), true);
+        $songs = $i === false ? [] : $live['sets'][$i]['songs'];
+        $j = null;
+        foreach ($songs as $k => $s) if (in_array($url, $s['image_urls'] ?? [], true)) $j = $k;
+        if ($j === null) throw new ApiError(404, '이미 지워진 사진이에요');
+        if (count($songs) <= 1) {
+            if (count($live['sets']) <= 1) throw new ApiError(400, '마지막 사진은 지울 수 없어요. 라이브를 끝내려면 ■ 종료를 눌러주세요');
+            array_splice($live['sets'], $i, 1);
+            if (($live['focus']['key'] ?? null) === LIVE_PASTE_KEY) $live['focus'] = null;
+            return $live;
+        }
+        array_splice($live['sets'][$i]['songs'], $j, 1);
+        if (($live['focus']['key'] ?? null) === LIVE_PASTE_KEY) {
+            $f = (int)$live['focus']['song'];
+            $live['focus']['song'] = max(0, min($f > $j ? $f - 1 : $f, count($live['sets'][$i]['songs']) - 1));
+        }
+        return $live;
+    });
+    @unlink(DATA_DIR . "/live/$name.jpg");
+    return ['live' => live_public($live)];
+}
+
 const QUICK_MESSAGES_DEFAULT = ['드럼 좀 천천히 부탁해요 🥁', '조금 더 고조 업업 🔥', '템포 조금 빠르게 ⏩', '한 번 더 반복 🔁',
                                 '후렴으로 가요', '조용히 마무리해요 🙏'];
 

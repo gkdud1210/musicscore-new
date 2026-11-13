@@ -78,6 +78,7 @@ $ROUTES = [
     ['PATCH', '#^/history/(\d+)$#', 'api_rename_history', 'member_ok'],
     ['DELETE', '#^/history/(\d+)$#', 'api_delete_history', 'member_ok'],
     ['GET', '#^/live/photo/([a-z0-9-]+)\.jpg$#', 'api_live_photo_image', 'member'],
+    ['DELETE', '#^/live/photo/([a-z0-9-]+)$#', 'api_delete_live_photo', 'member_ok'],
     ['GET', '#^/quick-messages$#', 'api_get_quick_messages', 'member'],
     ['PUT', '#^/quick-messages$#', 'api_put_quick_messages', 'admin'],
     ['GET', '#^/people$#', 'api_get_people', 'admin'],

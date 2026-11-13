@@ -189,6 +189,71 @@ async function pickLivePhoto() {
   input.click();
 }
 
+/* ── 붙여넣은 사진 정리: 🗑 지우기(모두의 화면에서) · 💾 콘티로 담기(콘티 목록에 새 콘티로) ─────── */
+const LIVE_PASTE_KEY = 'paste';
+
+function pasteToolsHtml(set) {
+  const live = LiveState.live;
+  return `${live?.can_edit ? '<button type="button" class="live-song-chip paste-tool danger" data-live="photo-del" title="보고 있는 사진을 지워요 (모두의 화면에서 빠져요)">🗑 이 사진 지우기</button>' : ''}
+    ${AuthState.canEdit ? `<button type="button" class="live-song-chip paste-tool" data-live="photo-save" title="붙여넣은 사진들을 콘티 목록에 새 콘티로 저장해요 (AI가 읽어서 곡으로 나눠요)">💾 콘티로 담기 (${set.songs.length}장)</button>` : ''}`;
+}
+
+/** 보고 있는 사진 → 서버 이름 (/api/live/photo/<name>.jpg) */
+function curPastePhoto() {
+  const sl = LiveState.slides?.[liveIndex()];
+  const m = sl && /\/api\/live\/photo\/([a-z0-9-]+)\.jpg$/.exec(sl.url);
+  return m ? { name: m[1], title: sl.song.title } : null;
+}
+
+async function deleteLivePhoto() {
+  const p = curPastePhoto();
+  if (!p) return;
+  if (!confirm(`"${p.title}"을(를) 지울까요?\n모두의 화면에서 빠져요.`)) return;
+  try {
+    const at = liveIndex();
+    const { live } = await apiJson(`/api/live/photo/${p.name}`, { method: 'DELETE' });
+    LiveState.live = live;
+    const V = LiveState.viewing;
+    V.pos[LIVE_PASTE_KEY] = at;   // 다음 사진으로 (마지막이었으면 앞 사진)
+    syncLiveViewerQuiet(live);
+    renderLiveSet();
+    showToast('🗑 사진을 지웠어요.', 'success');
+  } catch (e) {
+    showToast('사진 지우기 실패: ' + e.message, 'error');
+  }
+}
+
+async function saveLivePhotosAsConti() {
+  const set = LiveState.viewing?.sets.find(st => st.key === LIVE_PASTE_KEY);
+  const urls = (set?.songs || []).flatMap(s => s.image_urls);
+  if (!urls.length || LiveState.savingPhotos) return;
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  const title = prompt(`붙여넣은 사진 ${urls.length}장을 콘티 목록에 새 콘티로 담아요.\nAI가 읽어서 곡으로 나눠요. 콘티 이름:`,
+    `붙여넣은 사진 ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`);
+  if (title === null) return;
+  LiveState.savingPhotos = true;
+  const progress = t => showToast(`💾 ${t}...`, 'info', 4000);
+  try {
+    progress('사진 가져오는 중');
+    const files = await Promise.all(urls.map(async (u, i) => {
+      const res = await fetch(`${API_BASE}${u}`);
+      if (!res.ok) throw new Error(`${i + 1}번째 사진을 못 가져왔어요 (지난 사진은 하루 뒤에 지워져요)`);
+      return new File([await res.blob()], `p${i + 1}.jpg`, { type: 'image/jpeg' });
+    }));
+    let conti = await clientUploadImages(files, title.trim() || '붙여넣은 사진', progress);
+    if (conti.duplicate) { showToast(`이미 같은 사진으로 만든 콘티가 있어요: "${conti.title || conti.filename || ''}"`, 'info', 5000); return; }
+    if (conti.status === 'processing') conti = await waitForAnalysis(conti, progress);
+    if (conti.status === 'error') throw new Error(conti.status_detail || '분석 실패');
+    showToast(`💾 콘티 목록에 담았어요 (곡 ${conti.songs?.length || 0}개). 콘티 화면에서 제목·키를 확인해주세요.`, 'success', 6000);
+    if (typeof refreshAll === 'function') refreshAll().catch(() => {});
+  } catch (e) {
+    showToast('콘티로 담기 실패: ' + e.message, 'error');
+  } finally {
+    LiveState.savingPhotos = false;
+  }
+}
+
 document.addEventListener('paste', e => {
   const file = clipImage(e.clipboardData);
   if (!file) return;   // 글자 붙여넣기는 그대로
@@ -497,6 +562,7 @@ function renderLiveSet() {
     <div class="live-add hidden" id="liveAdd"></div>
     <div class="live-add live-msg-panel hidden" id="liveMsgPanel"></div>
     <div class="live-songs" id="liveSongs">
+      ${server && set.key === LIVE_PASTE_KEY ? pasteToolsHtml(set) : ''}
       ${set.songs.map((s, i) => `<button type="button" class="live-song-chip" data-live="jump" data-song="${i}">
         ${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</button>`).join('')}
     </div>
@@ -622,7 +688,7 @@ function updateLiveNow() {
     <strong>${sl.si + 1}. ${escapeHtml(sl.song.title)}</strong>
     ${sl.song.key ? `<span class="live-key">${escapeHtml(sl.song.key)}</span>` : ''}
     <span class="live-count">${sl.pages > 1 ? `${sl.pi + 1}/${sl.pages}쪽 · ` : ''}${i + 1} / ${slides.length}</span>`;
-  document.querySelectorAll('.live-song-chip').forEach((b, k) => b.classList.toggle('active', k === sl.si));
+  document.querySelectorAll('.live-song-chip[data-live="jump"]').forEach((b, k) => b.classList.toggle('active', k === sl.si));
   document.querySelector('.live-song-chip.active')?.scrollIntoView({ block: 'nearest', inline: 'center' });
 }
 
@@ -1101,6 +1167,8 @@ document.addEventListener('click', e => {
     case 'quick-save': saveQuickMessages(); break;
     case 'notify': notifyLive(); break;
     case 'paste': pickLivePhoto(); break;
+    case 'photo-del': deleteLivePhoto(); break;
+    case 'photo-save': saveLivePhotosAsConti(); break;
     case 'dismiss':
       if (LiveState.live) { setLiveSeen(LiveState.live.id); setFocusSeen(LiveState.live); setInviteSeen(LiveState.live); }
       hideLiveAlert();
