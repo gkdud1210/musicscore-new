@@ -297,6 +297,84 @@ function shift_pages(int $id, int $from, int $to, int $d): void
     }
 }
 
+/**
+ * ↔ 콘티 안의 곡 순서 바꾸기 (꾹 눌러 옮기기). 곡마다 그 곡의 쪽들(뒤에 붙은, 곡이 아닌 쪽도 같이)을 통째로 옮긴다:
+ * 그림 파일 · pages · annotations · 곡 범위를 새 쪽 번호로. 첫 곡 앞의 곡 아닌 쪽은 맨 앞에 그대로.
+ */
+function api_reorder_songs(int $id): array
+{
+    $s = score_row($id);
+    $count = (int)$s['page_count'];
+    $want = array_map('intval', (array)(body_json()['song_ids'] ?? []));
+    $songs = q_all('SELECT id, page_start, page_end FROM songs WHERE score_id = ? ORDER BY page_start, id', [$id]);
+    if (count($songs) < 2) return summary_by_id($id);
+    $ids = array_map('intval', array_column($songs, 'id'));
+    $sorted = $want;
+    sort($sorted);
+    $have = $ids;
+    sort($have);
+    if ($sorted !== $have) throw new ApiError(409, '그 사이 곡이 바뀌었어요. 다시 열어서 해주세요');
+    // 곡 덩어리: [이 곡 시작 .. 다음 곡 시작 - 1] (마지막 곡은 끝까지). 곡끼리 겹치면 옮길 수 없다
+    $block = [];
+    foreach ($songs as $k => $r) {
+        $next = $songs[$k + 1]['page_start'] ?? $count + 1;
+        if ((int)$r['page_end'] >= (int)$next) throw new ApiError(400, '쪽을 같이 쓰는 곡이 있어서 순서를 바꿀 수 없어요');
+        $block[(int)$r['id']] = [(int)$r['page_start'], (int)$next - 1];
+    }
+    $head = (int)$songs[0]['page_start'] - 1;   // 첫 곡 앞의 곡 아닌 쪽 수
+    $map = [];   // 옛 쪽 → 새 쪽
+    for ($n = 1; $n <= $head; $n++) $map[$n] = $n;
+    $pos = $head;
+    $shift = [];   // 곡 id → 옮긴 칸 수
+    foreach ($want as $sid) {
+        [$a, $z] = $block[$sid];
+        $shift[$sid] = $pos + 1 - $a;
+        for ($n = $a; $n <= $z; $n++) $map[$n] = ++$pos;
+    }
+    $moved = array_filter($map, fn($to, $from) => $to !== $from, ARRAY_FILTER_USE_BOTH);
+    if (!$moved) return summary_by_id($id);
+
+    // 그림 파일: 임시 이름으로 뺐다가 새 자리로 (실패하면 되돌림)
+    $done = [];
+    $undo = function () use (&$done) { foreach (array_reverse($done) as [$from, $to]) @rename($to, $from); };
+    try {
+        foreach ($moved as $from => $to) {
+            $src = page_file($id, $from);
+            if (!is_file($src)) continue;
+            $tmp = score_dir($id) . "/reorder.$from.tmp";
+            if (!@rename($src, $tmp)) throw new ApiError(500, '악보 순서를 바꾸지 못했어요');
+            $done[] = [$src, $tmp];
+        }
+        foreach ($moved as $from => $to) {
+            $tmp = score_dir($id) . "/reorder.$from.tmp";
+            if (!is_file($tmp)) continue;
+            if (!@rename($tmp, page_file($id, $to))) throw new ApiError(500, '악보 순서를 바꾸지 못했어요');
+            $done[] = [$tmp, page_file($id, $to)];
+        }
+    } catch (Throwable $e) {
+        $undo();
+        throw $e;
+    }
+    db()->beginTransaction();
+    try {
+        foreach (['pages', 'annotations'] as $t) {   // 기본 키가 겹치지 않게 두 번에 나눠 옮긴다
+            foreach ($moved as $from => $to) q("UPDATE $t SET page_number = ? WHERE score_id = ? AND page_number = ?", [$to + 100000, $id, $from]);
+            q("UPDATE $t SET page_number = page_number - 100000 WHERE score_id = ? AND page_number > 100000", [$id]);
+        }
+        foreach ($shift as $sid => $d) {
+            if ($d) q('UPDATE songs SET page_start = page_start + ?, page_end = page_end + ? WHERE id = ?', [$d, $d, $sid]);
+        }
+        touch_score($id);
+        db()->commit();
+    } catch (Throwable $e) {
+        db()->rollBack();
+        $undo();
+        throw $e;
+    }
+    if (isset($moved[1]) || in_array(1, $moved, true)) @unlink(thumb_file($id));   // 표지는 새 1쪽으로
+    return summary_by_id($id);
+}
+
 /** 콘티 전체 코드·가사 (검색용) 다시 모으기 */
 function refresh_score_text(int $id): void
 {

@@ -232,7 +232,6 @@ function toggleLiveInk(on = !LiveInk.on) {
   document.querySelector('[data-live="ink"]')?.classList.toggle('active', on);
   renderLiveInkBar();
   if (!on) { LiveInk.hand = false; document.getElementById('liveViewer')?.classList.remove('hand'); }
-  if (on) showToast('✍️ 악보 위에 써요. ✋ 를 누르면 손가락으로 확대·옮기기, 넘기기는 ‹ › 버튼으로. 쓴 건 팀 모두의 같은 악보에 남아요.', 'info', 4000);
 }
 
 function renderLiveInkBar() {
@@ -299,7 +298,6 @@ function liveInkAction(act, el) {
     case 'ink': toggleLiveInk(); return true;
     case 'ink-tool': LiveInk.tool = el.dataset.tool; LiveInk.hand = false; break;
     case 'ink-hand': LiveInk.hand = !LiveInk.hand; renderLiveInkBar();
-      if (LiveInk.hand) showToast('✋ 두 손가락으로 벌리면 확대, 한 손가락으로 옮겨요. 쓰려면 🖊️', 'info', 2500);
       return true;
     case 'ink-zoom-reset': resetLiveZoom(); return true;
     case 'ink-color': LiveInk.color[LiveInk.tool] = el.dataset.color; break;

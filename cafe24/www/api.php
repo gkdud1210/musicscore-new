@@ -55,6 +55,7 @@ $ROUTES = [
     ['PATCH', '#^/songs/(\d+)$#', 'api_update_song', 'admin'],
     ['DELETE', '#^/songs/(\d+)$#', 'api_delete_song', 'admin'],
     ['POST', '#^/songs/(\d+)/merge-prev$#', 'api_merge_prev', 'admin'],
+    ['POST', '#^/scores/(\d+)/reorder-songs$#', 'api_reorder_songs', 'admin'],
     ['POST', '#^/songs/(\d+)/split$#', 'api_split_song', 'admin'],
     ['POST', '#^/songs/(\d+)/remove-page$#', 'api_remove_page', 'admin'],
     ['POST', '#^/songs/(\d+)/keep$#', 'api_keep_sheet', 'admin'],

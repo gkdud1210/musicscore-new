@@ -2068,3 +2068,155 @@ async function exportSetlist() {
     btn.textContent = '⬇️ PDF 내보내기';
   }
 }
+
+/* ============================================================
+   ↔ 콘티 안 곡 순서 바꾸기 (관리자) — 곡을 꾹 누르면 이름표가 떠올라 손가락을 따라오고,
+   다른 곡들이 미끄러지듯 비켜준다. 놓으면 서버에서 쪽 순서까지 바꾼다 (필기도 같이).
+   글자 칸·버튼 위에서는 시작하지 않는다 (제목 고치기·버튼 누르기는 그대로)
+   ============================================================ */
+const ContiDrag = { timer: 0, active: false, card: null, ghost: null, x: 0, y: 0, dropped: 0, scroll: 0 };
+
+/** 움직이는 중(미끄러지는 애니메이션)이어도 원래 자리 기준의 화면 좌표 */
+function layoutRect(el) {
+  const p = el.offsetParent || document.body;
+  const pr = p.getBoundingClientRect();
+  const left = pr.left + p.clientLeft + el.offsetLeft - p.scrollLeft, top = pr.top + p.clientTop + el.offsetTop - p.scrollTop;
+  return { left, top, width: el.offsetWidth, height: el.offsetHeight, right: left + el.offsetWidth, bottom: top + el.offsetHeight };
+}
+
+function contiDragCards() {
+  return [...document.querySelectorAll('#contiSongsWrap > .conti-song[data-song-id]')];
+}
+
+function contiDragEnd() {
+  clearTimeout(ContiDrag.timer);
+  cancelAnimationFrame(ContiDrag.scroll);
+  ContiDrag.ghost?.remove();
+  ContiDrag.card?.classList.remove('conti-dragging');
+  document.body.classList.remove('conti-reordering');
+  const was = ContiDrag.active;
+  Object.assign(ContiDrag, { active: false, card: null, ghost: null });
+  return was;
+}
+
+function contiFlip(move) {
+  const cards = [...document.querySelectorAll('#contiSongsWrap > .conti-song')].filter(c => c !== ContiDrag.card);
+  const before = new Map(cards.map(c => [c, c.getBoundingClientRect()]));
+  move();
+  cards.forEach(c => {
+    const a = before.get(c), b = c.getBoundingClientRect();
+    const dx = a.left - b.left, dy = a.top - b.top;
+    if (!dx && !dy) return;
+    c.style.transition = 'none';
+    c.style.transform = `translate(${dx}px, ${dy}px)`;
+    c.getBoundingClientRect();
+    c.style.transition = 'transform .22s cubic-bezier(.2, .8, .2, 1)';
+    c.style.transform = '';
+    c.addEventListener('transitionend', () => { c.style.transition = ''; }, { once: true });
+  });
+}
+
+document.addEventListener('pointerdown', e => {
+  if (!AuthState.canEdit || LibState.modal?.type !== 'conti' || e.button > 0) return;
+  const card = e.target.closest?.('#contiSongsWrap > .conti-song[data-song-id]');
+  if (!card || e.target.closest('input, textarea, select, button, a, label')) return;
+  if (contiDragCards().length < 2) return;
+  contiDragEnd();
+  Object.assign(ContiDrag, { card, x: e.clientX, y: e.clientY });
+  ContiDrag.timer = setTimeout(() => {
+    ContiDrag.active = true;
+    ContiDrag.startOrder = contiDragCards().map(c => c.dataset.songId).join();
+    const no = card.querySelector('.conti-song-no')?.textContent.trim() || '';
+    const title = card.querySelector('input[name="title"]')?.value || '';
+    const key = card.querySelector('input[name="key"]')?.value || '';
+    const g = document.createElement('div');
+    g.className = 'conti-drag-ghost';
+    g.innerHTML = `<span class="conti-drag-no">${escapeHtml(no)}</span> ${escapeHtml(title)}${key ? ` <b>${escapeHtml(key)}</b>` : ''}
+      ${card.querySelector('.song-page img') ? `<img src="${card.querySelector('.song-page img').src}" alt="" />` : ''}`;
+    document.body.appendChild(g);
+    ContiDrag.ghost = g;
+    ContiDrag.gw = g.offsetWidth / 2;
+    ContiDrag.gh = g.offsetHeight / 2;
+    g.style.translate = `${ContiDrag.x - ContiDrag.gw}px ${ContiDrag.y - ContiDrag.gh}px`;
+    requestAnimationFrame(() => g.classList.add('lifted'));
+    card.classList.add('conti-dragging');
+    document.body.classList.add('conti-reordering');
+    navigator.vibrate?.(25);
+  }, 420);
+});
+
+document.addEventListener('pointermove', e => {
+  if (!ContiDrag.card) return;
+  if (!ContiDrag.active) {
+    if (Math.hypot(e.clientX - ContiDrag.x, e.clientY - ContiDrag.y) > 8) contiDragEnd();   // 스크롤이었음
+    return;
+  }
+  e.preventDefault();
+  ContiDrag.ghost.style.translate = `${e.clientX - ContiDrag.gw}px ${e.clientY - ContiDrag.gh}px`;
+  // 화면 위·아래 끝에 가면 저절로 스크롤
+  const scroller = document.getElementById('libModal');
+  const edge = 70;
+  const v = e.clientY < edge ? -(edge - e.clientY) / 4 : e.clientY > innerHeight - edge ? (e.clientY - innerHeight + edge) / 4 : 0;
+  cancelAnimationFrame(ContiDrag.scroll);
+  if (v && scroller) {
+    const tick = () => { scroller.scrollTop += v; ContiDrag.scroll = requestAnimationFrame(tick); };
+    ContiDrag.scroll = requestAnimationFrame(tick);
+  }
+  // 손가락에서 가장 가까운 곡 카드 → 그 앞/뒤로
+  let over = null, best = Infinity;
+  for (const c of contiDragCards()) {
+    if (c === ContiDrag.card) continue;
+    const r = layoutRect(c);
+    const dx = Math.max(r.left - e.clientX, 0, e.clientX - r.right), dy = Math.max(r.top - e.clientY, 0, e.clientY - r.bottom);
+    const d = dx + dy;
+    if (d < best) { best = d; over = c; }
+  }
+  if (!over || best > 80) return;
+  const r = layoutRect(over);
+  // 칸으로 보기(2칸·4칸)에서 같은 줄이면 왼쪽/오른쪽, 한 줄씩 보기면 위/아래로
+  const grid = r.width < over.parentElement.clientWidth * 0.6;
+  const sameRow = grid && e.clientY >= r.top && e.clientY <= r.bottom;
+  const after = sameRow ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2;
+  const ref = after ? over.nextElementSibling : over;
+  const card = ContiDrag.card;
+  if (ref === card || ref === card.nextElementSibling) return;
+  contiFlip(() => over.parentElement.insertBefore(card, ref));
+}, { passive: false });
+
+document.addEventListener('touchmove', e => { if (ContiDrag.active) e.preventDefault(); }, { passive: false });
+document.addEventListener('pointercancel', () => { if (!ContiDrag.active) contiDragEnd(); });
+document.addEventListener('pointerup', () => {
+  if (!ContiDrag.card) return;
+  const card = ContiDrag.card, g = ContiDrag.ghost;
+  if (!ContiDrag.active) { contiDragEnd(); return; }
+  ContiDrag.dropped = Date.now();
+  // 이름표가 카드 자리로 쏙 들어간 뒤 저장
+  const r = card.getBoundingClientRect();
+  g.classList.remove('lifted');
+  g.classList.add('dropping');
+  g.style.translate = `${r.left + 12}px ${Math.max(r.top + 8, 8)}px`;
+  ContiDrag.ghost = null;
+  setTimeout(() => g.remove(), 240);
+  contiDragEnd();
+  commitContiSongOrder();
+});
+// 꾹 눌러 옮긴 뒤 손을 뗄 때 생기는 클릭은 무시
+document.addEventListener('click', e => {
+  if (Date.now() - ContiDrag.dropped < 400 && e.target.closest?.('#contiSongsWrap')) { e.stopPropagation(); e.preventDefault(); }
+}, true);
+
+async function commitContiSongOrder() {
+  const id = LibState.modal?.id;
+  const order = contiDragCards().map(c => Number(c.dataset.songId));
+  if (!id || !order.length || order.join() === ContiDrag.startOrder) return;   // 제자리에 놓았으면 그대로
+  contiDragCards().forEach((c, i) => { const no = c.querySelector('.conti-song-no'); if (no) no.textContent = i + 1; });
+  try {
+    if (!(await saveAllConti({ reload: false, quiet: true }))) { await reloadContiModal(); return; }
+    await apiJson(`/api/scores/${id}/reorder-songs`, jsonBody('POST', { song_ids: order }));
+    LibState.modalDirty = true;
+    showToast('↔ 곡 순서를 바꿨어요.', 'success', 2000);
+  } catch (e) {
+    showToast('순서 바꾸기 실패: ' + e.message, 'error');
+  }
+  await reloadContiModal();
+}

@@ -2720,3 +2720,43 @@ html[data-theme="light"] .live-track.overview { background: #e6e7ec; }
 /* 📡 라이브에 넣기 고르기: 콘티가 많아도 스크롤 */
 .live-leave-box { max-height: 85vh; overflow-y: auto; }
 .live-leave-title small { display: block; font-weight: 500; font-size: 13px; opacity: .75; margin-top: 2px; }
+
+/* ＋ 콘티: 표지 그림 + 톡 하면 악보 미리 보기 */
+.live-add-item.has-thumb { display: flex; align-items: center; gap: 10px; padding: 6px 10px 6px 6px; }
+.live-add-item.has-thumb.open { border-color: var(--accent); }
+.live-add-thumb { width: 44px; height: 58px; flex-shrink: 0; object-fit: cover; object-position: top; border-radius: 5px; background: #fff; display: block; }
+.live-add-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.live-add-text small { margin-left: 0 !important; }
+.live-add-plus { flex-shrink: 0; background: #2a2a36; color: #fff; border: 1px solid #3a3a48; border-radius: 8px; padding: 0 14px; font-size: 18px; font-weight: 800; cursor: pointer; }
+.live-add-plus.wide { font-size: 14px; padding: 8px 14px; background: var(--accent); border-color: var(--accent); }
+.live-add-plus[disabled] { opacity: .4; cursor: default; }
+.live-add-preview { background: #15151c; border: 1px solid #2c2c38; border-radius: 10px; padding: 10px; margin: 2px 0 6px; }
+.live-add-prev-head { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.live-add-pages { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.live-add-song { flex: 0 0 auto; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.live-add-song-imgs { display: flex; gap: 4px; }
+.live-add-song-imgs img { height: min(34vh, 260px); width: auto; border-radius: 6px; background: #fff; display: block; box-shadow: 0 2px 8px rgba(0,0,0,.35); }
+.live-add-song figcaption { font-size: 12px; color: #ddd; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; max-width: 100%; }
+.live-add-song figcaption b { color: #ffd76b; }
+.live-add-one { background: transparent; color: #cfd2ff; border: 1px solid #4a4a5a; border-radius: 999px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
+html[data-theme="light"] .live-add-preview { background: #f6f7fa; border-color: #d8dae3; }
+html[data-theme="light"] .live-add-plus:not(.wide) { background: #fff; color: #111; border-color: #c9cbd6; }
+html[data-theme="light"] .live-add-song figcaption { color: #333; }
+html[data-theme="light"] .live-add-song figcaption b { color: #b45309; }
+html[data-theme="light"] .live-add-one { color: #4338ca; border-color: #c7c9e0; }
+
+/* ↔ 콘티 안 곡 순서: 꾹 누르면 이름표가 떠올라 따라오고, 원래 자리는 점선 */
+.conti-song.conti-dragging { opacity: .35; outline: 2px dashed var(--accent); outline-offset: 3px; }
+body.conti-reordering #contiSongsWrap { touch-action: none; user-select: none; -webkit-user-select: none; }
+#contiSongsWrap > .conti-song[data-song-id] { -webkit-touch-callout: none; }
+.conti-drag-ghost { position: fixed; left: 0; top: 0; z-index: 3000; pointer-events: none; display: flex; align-items: center; gap: 8px;
+  max-width: min(80vw, 360px); padding: 8px 12px 8px 8px; border-radius: 12px; background: var(--bg-secondary, #1a1a22); color: var(--text-primary, #fff);
+  border: 2px solid var(--accent); font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: scale .15s ease, rotate .15s ease, box-shadow .15s ease; will-change: translate; }
+.conti-drag-ghost.lifted { scale: 1.06; rotate: -2deg; box-shadow: 0 14px 30px rgba(0,0,0,.45); }
+.conti-drag-ghost.dropping { transition: translate .2s cubic-bezier(.2,.8,.2,1), scale .2s, opacity .2s; scale: .9; opacity: 0; }
+.conti-drag-ghost img { width: 34px; height: 46px; object-fit: cover; object-position: top; border-radius: 4px; background: #fff; order: -1; }
+.conti-drag-no { background: var(--accent); color: #fff; border-radius: 999px; min-width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; }
+.conti-song-no { cursor: grab; }
+/* 끌어 옮길 때 자리 계산 기준 */
+#contiSongsWrap, #liveSets, #liveSongs { position: relative; }
