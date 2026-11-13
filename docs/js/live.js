@@ -224,25 +224,45 @@ async function liveSetToSetlist() {
     : '이 콘티의 곡은 이미 다 담겨 있어요.', added ? 'success' : 'info', added ? 6000 : 3000);
 }
 
-/** 붙여넣은 사진 이름 옆 ✕: 그 사진을 지운다 (모두의 화면에서 빠져요) */
-async function deleteLivePhoto(si) {
+/** 악보 이름 옆 ✕: 그 곡을 콘티에서 뺀다. 함께 보는 라이브면 모두의 화면에서(붙여넣은 사진은 사진도 지움), 내 화면에만 더한 콘티·혼자 보기면 내 화면에서만 */
+function canRemoveLiveSong(set) {
   const V = LiveState.viewing;
-  const song = V?.sets[V.cur]?.songs[si];
-  const m = song && /\/api\/live\/photo\/([a-z0-9-]+)\.jpg$/.exec(song.image_urls[0] || '');
-  if (!m || LiveState.deletingPhoto) return;
-  LiveState.deletingPhoto = true;
-  try {
-    const at = liveIndex();
-    const { live } = await apiJson(`/api/live/photo/${m[1]}`, { method: 'DELETE' });
-    LiveState.live = live;
-    V.pos[LIVE_PASTE_KEY] = at > si ? at - 1 : at;   // 보던 사진 그대로 (지운 게 보던 사진이면 다음 사진)
-    syncLiveViewerQuiet(live);
+  if (!V || (V.sets.length <= 1 && set.songs.length <= 1)) return false;   // 마지막 악보는 X (→ ■ 종료)
+  return set.mine || V.local || !!LiveState.live?.can_edit;
+}
+
+async function removeLiveSong(si) {
+  const V = LiveState.viewing;
+  const set = V?.sets[V.cur];
+  const song = set?.songs[si];
+  if (!song || !canRemoveLiveSong(set) || LiveState.removingSong) return;
+  // 보던 쪽 지키기: 뺀 곡보다 뒤를 보고 있었으면 그만큼 당기고, 뺀 곡을 보고 있었으면 다음 곡 처음으로
+  const slides = liveSlides(set);
+  const at = liveIndex();
+  const curSi = slides[at]?.si ?? 0;
+  const startOf = slides.findIndex(sl => sl.si === si);
+  const pos = curSi > si ? at - song.image_urls.length : curSi === si ? startOf : at;
+  if (set.mine || V.local) {
+    set.songs = set.songs.filter((_, k) => k !== si);
+    if (!set.songs.length) { removeLiveSet(V.cur); return; }
+    V.pos[set.key] = pos;
     renderLiveSet();
-    showToast(`✕ "${song.title}"을(를) 지웠어요.`, 'success');
+    showToast(`✕ "${song.title}"을(를) 내 화면에서 뺐어요.`, 'success');
+    return;
+  }
+  LiveState.removingSong = true;
+  try {
+    const { live } = await apiJson(`/api/live/sets/${encodeURIComponent(set.key)}/remove-song`,
+      jsonBody('POST', { index: si, url: song.image_urls[0] || '' }));
+    LiveState.live = live;
+    syncLiveViewerQuiet(live);
+    if (V.sets[V.cur]?.key === set.key) V.pos[set.key] = pos;
+    renderLiveSet();
+    showToast(`✕ "${song.title}"을(를) 뺐어요. 모두의 화면에서 빠져요.`, 'success');
   } catch (e) {
-    showToast('사진 지우기 실패: ' + e.message, 'error');
+    showToast('악보 빼기 실패: ' + e.message, 'error');
   } finally {
-    LiveState.deletingPhoto = false;
+    LiveState.removingSong = false;
   }
 }
 
@@ -548,11 +568,11 @@ function renderLiveTabs() {
   if (!V || !box) return;
   const live = LiveState.live;
   const shared = !V.local && live?.can_edit;
-  // ✕ 빼기: 보고 있는 콘티에만. 내 화면에만 더한 것·혼자 보기는 누구나, 함께 보는 라이브는 고칠 수 있는 사람만 (마지막 하나는 X)
+  // ✕ 빼기: 콘티마다. 내 화면에만 더한 것·혼자 보기는 누구나, 함께 보는 라이브는 고칠 수 있는 사람만 (마지막 하나는 X)
   const canRemove = st => V.sets.length > 1 && (st.mine || V.local || shared);
   box.innerHTML = `
-      ${V.sets.map((st, i) => `<span class="live-set-wrap${i === V.cur && canRemove(st) ? ' has-x' : ''}"><button type="button" role="tab" aria-selected="${i === V.cur}" class="live-set-tab${i === V.cur ? ' active' : ''}${st.mine ? ' mine' : ''}${!V.local && live?.focus?.key === st.key ? ' focus' : ''}"
-          data-live="set" data-set="${i}">${i + 1}. ${escapeHtml(st.title)} <span>${st.songs.length}곡</span></button>${i === V.cur && canRemove(st)
+      ${V.sets.map((st, i) => `<span class="live-set-wrap${canRemove(st) ? ' has-x' : ''}"><button type="button" role="tab" aria-selected="${i === V.cur}" class="live-set-tab${i === V.cur ? ' active' : ''}${st.mine ? ' mine' : ''}${!V.local && live?.focus?.key === st.key ? ' focus' : ''}"
+          data-live="set" data-set="${i}">${i + 1}. ${escapeHtml(st.title)} <span>${st.songs.length}곡</span></button>${canRemove(st)
           ? `<button type="button" class="live-set-x" data-live="remove-set" data-set="${i}" title="${st.mine || V.local ? '이 콘티 빼기 (내 화면에서만)' : '이 콘티 빼기 (모두의 화면에서 빠져요)'}" aria-label="${escapeHtml(st.title)} 빼기">✕</button>` : ''}</span>`).join('')}
       <button type="button" class="live-set-tab add" data-live="add-set" title="${shared ? '콘티를 더하면 모두의 화면에 같이 생겨요' : '다른 콘티도 위에 추가해서 보기 (내 화면에만)'}">＋ 콘티</button>`;
   box.querySelector('.live-set-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'center' });
@@ -568,7 +588,7 @@ function renderLiveSet() {
   LiveState.slides = slides;
   const live = LiveState.live;
   const server = !V.local && live && live.id === V.id;
-  const photoX = server && set.key === LIVE_PASTE_KEY && live.can_edit;   // 붙여넣은 사진: 이름 옆 ✕ 로 지우기
+  const songX = canRemoveLiveSong(set);   // 악보 이름 옆 ✕ 로 빼기
   v.classList.toggle('top-min', liveTopMin());
   v.innerHTML = `
     <div class="live-top">
@@ -592,8 +612,8 @@ function renderLiveSet() {
       ${set.songs.map((s, i) => {
         const chip = `<button type="button" class="live-song-chip" data-live="jump" data-song="${i}">
         ${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</button>`;
-        return photoX ? `<span class="live-chip-wrap">${chip}<button type="button" class="live-chip-x" data-live="photo-del" data-song="${i}"
-          title="이 사진 지우기 (모두의 화면에서 빠져요)" aria-label="${escapeHtml(s.title)} 지우기">✕</button></span>` : chip;
+        return songX ? `<span class="live-chip-wrap">${chip}<button type="button" class="live-chip-x" data-live="song-x" data-song="${i}"
+          title="${set.mine || V.local ? '이 악보 빼기 (내 화면에서만)' : '이 악보 빼기 (모두의 화면에서 빠져요)'}" aria-label="${escapeHtml(s.title)} 빼기">✕</button></span>` : chip;
       }).join('')}
     </div>
     <div class="live-track${liveVertical() ? ' vertical' : ''}" id="liveTrack">
@@ -879,8 +899,9 @@ async function removeLiveSet(i) {
     }
     return;
   }
+  if (V.sets[V.cur]) V.pos[V.sets[V.cur].key] = liveIndex();
   V.sets.splice(i, 1);
-  V.cur = Math.min(i, V.sets.length - 1);
+  V.cur = i < V.cur ? V.cur - 1 : Math.min(V.cur, V.sets.length - 1);   // 다른 탭을 빼면 보던 콘티 그대로
   renderLiveSet();
   showToast(`"${st.title}"을(를) 내 화면에서 뺐어요.`, 'success');
 }
@@ -1197,7 +1218,7 @@ document.addEventListener('click', e => {
     case 'quick-save': saveQuickMessages(); break;
     case 'notify': notifyLive(); break;
     case 'paste': pickLivePhoto(); break;
-    case 'photo-del': deleteLivePhoto(Number(el.dataset.song)); break;
+    case 'song-x': removeLiveSong(Number(el.dataset.song)); break;
     case 'to-setlist': liveSetToSetlist(); break;
     case 'dismiss':
       if (LiveState.live) { setLiveSeen(LiveState.live.id); setFocusSeen(LiveState.live); setInviteSeen(LiveState.live); }

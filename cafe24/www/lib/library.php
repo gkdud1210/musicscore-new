@@ -1406,31 +1406,43 @@ function api_live_photo(): array
 
 function api_live_photo_image(string $name): void { send_image(DATA_DIR . "/live/$name.jpg"); }
 
-/** 🗑 붙여넣은 사진 한 장 지우기 (모두의 화면에서 빠진다). 다 지우면 "붙여넣은 사진" 콘티도 빠진다 */
-function api_delete_live_photo(string $name): array
+/**
+ * ✕ 라이브 콘티에서 곡(악보) 하나 빼기 (모두의 화면에서 빠진다). 붙여넣은 사진이면 사진 파일도 지운다.
+ * 그 사이 다른 사람이 고쳤을 수 있어서 index 와 첫 쪽 주소(url)가 맞을 때만 뺀다.
+ * 콘티의 마지막 곡이면 콘티째 빠지고, 라이브의 마지막 곡은 뺄 수 없다 (→ ■ 종료)
+ */
+function api_remove_live_song($key): array
 {
-    $url = "/api/live/photo/$name.jpg";
-    $live = live_update(function (?array $live) use ($url) {
+    $key = (string)$key;
+    $b = body_json();
+    $idx = (int)($b['index'] ?? -1);
+    $url = (string)($b['url'] ?? '');
+    $removed = null;
+    $live = live_update(function (?array $live) use ($key, $idx, $url, &$removed) {
         $live = live_require_editor($live);
-        $i = array_search(LIVE_PASTE_KEY, array_column($live['sets'], 'key'), true);
-        $songs = $i === false ? [] : $live['sets'][$i]['songs'];
-        $j = null;
-        foreach ($songs as $k => $s) if (in_array($url, $s['image_urls'] ?? [], true)) $j = $k;
-        if ($j === null) throw new ApiError(404, '이미 지워진 사진이에요');
+        $i = array_search($key, array_column($live['sets'], 'key'), true);
+        if ($i === false) throw new ApiError(404, '라이브에 없는 콘티예요');
+        $songs = $live['sets'][$i]['songs'];
+        $j = isset($songs[$idx]) && ($songs[$idx]['image_urls'][0] ?? '') === $url ? $idx : null;
+        if ($j === null) foreach ($songs as $k => $s) if (($s['image_urls'][0] ?? '') === $url) { $j = $k; break; }
+        if ($j === null) throw new ApiError(404, '이미 빠진 악보예요');
+        $removed = $songs[$j];
         if (count($songs) <= 1) {
-            if (count($live['sets']) <= 1) throw new ApiError(400, '마지막 사진은 지울 수 없어요. 라이브를 끝내려면 ■ 종료를 눌러주세요');
+            if (count($live['sets']) <= 1) throw new ApiError(400, '마지막 악보는 뺄 수 없어요. 라이브를 끝내려면 ■ 종료를 눌러주세요');
             array_splice($live['sets'], $i, 1);
-            if (($live['focus']['key'] ?? null) === LIVE_PASTE_KEY) $live['focus'] = null;
+            if (($live['focus']['key'] ?? null) === $key) $live['focus'] = null;
             return $live;
         }
         array_splice($live['sets'][$i]['songs'], $j, 1);
-        if (($live['focus']['key'] ?? null) === LIVE_PASTE_KEY) {
+        if (($live['focus']['key'] ?? null) === $key) {
             $f = (int)$live['focus']['song'];
             $live['focus']['song'] = max(0, min($f > $j ? $f - 1 : $f, count($live['sets'][$i]['songs']) - 1));
         }
         return $live;
     });
-    @unlink(DATA_DIR . "/live/$name.jpg");
+    foreach ($removed['image_urls'] ?? [] as $u) {
+        if (preg_match('#^/api/live/photo/([a-z0-9-]+)\.jpg$#', $u, $m)) @unlink(DATA_DIR . "/live/{$m[1]}.jpg");
+    }
     return ['live' => live_public($live)];
 }
 
