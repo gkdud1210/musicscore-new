@@ -658,7 +658,7 @@ function renderLiveSet() {
       }).join('')}
     </div>
     <div class="live-track${liveVertical() ? ' vertical' : ''}" id="liveTrack">
-      ${slides.map((sl, i) => `<div class="live-slide" data-index="${i}">
+      ${slides.map((sl, i) => `<div class="live-slide" data-index="${i}" data-title="${escapeHtml(`${sl.si + 1}. ${sl.song.title}${sl.pages > 1 ? ` (${sl.pi + 1}/${sl.pages})` : ''}`)}">
         <img src="${API_BASE}${sl.url}" alt="${escapeHtml(sl.song.title)}" ${i < 3 ? '' : 'loading="lazy"'} draggable="false" />
       </div>`).join('')}
     </div>
@@ -668,6 +668,11 @@ function renderLiveSet() {
 
   const track = document.getElementById('liveTrack');
   const start = Math.min(V.pos[set.key] || 0, Math.max(0, slides.length - 1));
+  applyLiveOverview(track);
+  track.addEventListener('click', e => {   // 한눈에 보기에서 악보를 톡 → 그 악보 크게
+    const sl = liveOverview() && e.target.closest('.live-slide');
+    if (sl) setLiveOverview(0, Number(sl.dataset.index));
+  });
   setTrackPos(start);
   if (liveVertical() && start) {   // 그림이 늦게 뜨면 위치가 밀리니 다 뜬 뒤 한 번 더
     track.querySelectorAll('img').forEach(im => im.addEventListener('load', () => { if (V.pos[set.key] === start) setTrackPos(start); }, { once: true }));
@@ -728,6 +733,7 @@ function toggleLiveScrollMode() {
 function liveIndex() {
   const track = document.getElementById('liveTrack');
   if (!track) return 0;
+  if (liveOverview()) return Math.min(LiveState.ovFocus || 0, Math.max(0, track.children.length - 1));
   if (!track.classList.contains('vertical')) return Math.round(track.scrollLeft / Math.max(1, track.clientWidth));
   // 세로: 화면 위쪽 1/3 지점에 걸친 쪽
   const y = track.scrollTop + track.clientHeight / 3;
@@ -740,9 +746,53 @@ function liveIndex() {
 function setTrackPos(i, smooth = false) {
   const track = document.getElementById('liveTrack');
   if (!track) return;
+  if (liveOverview()) {   // 한눈에 보기: 그 악보에 테두리, 화면 가운데로
+    LiveState.ovFocus = Math.max(0, Math.min(track.children.length - 1, i));
+    applyLiveOverview(track);
+    track.children[LiveState.ovFocus]?.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'auto' });
+    updateLiveNow();
+    return;
+  }
   const behavior = smooth ? 'smooth' : 'auto';
   if (track.classList.contains('vertical')) track.scrollTo({ top: track.children[i]?.offsetTop || 0, behavior });
   else track.scrollTo({ left: i * track.clientWidth, behavior });
+}
+
+/* ── 🔍 두 손가락으로 오므리면 악보들이 작아져서 한눈에 (2·3·4·6칸), 벌리면 다시 크게 ───────
+ * 제스처는 live-ink.js 에서. 고른 칸 수는 콘티를 바꿔도 그대로, 라이브 화면을 닫으면 원래대로. */
+const LIVE_OV_COLS = [0, 2, 3, 4, 6];
+const liveOverview = () => LIVE_OV_COLS[LiveState.ovLevel || 0] || 0;
+
+function applyLiveOverview(track = document.getElementById('liveTrack')) {
+  if (!track) return;
+  const c = liveOverview();
+  track.classList.toggle('overview', !!c);
+  track.style.setProperty('--ov-cols', c || 1);
+  [...track.children].forEach((sl, i) => sl.classList.toggle('ov-cur', !!c && i === LiveState.ovFocus));
+  document.getElementById('liveViewer')?.classList.toggle('ov', !!c);
+}
+
+/** level: 0 = 한 장씩, 1~4 = 2·3·4·6칸. focus: 그 악보를 기준으로 */
+function setLiveOverview(level, focus = null) {
+  const track = document.getElementById('liveTrack');
+  if (!track) return;
+  level = Math.max(0, Math.min(LIVE_OV_COLS.length - 1, level));
+  const before = LiveState.ovLevel || 0;
+  if (level === before && focus === null) return;
+  const keep = Math.max(0, Math.min(track.children.length - 1, focus ?? liveIndex()));
+  if (level && typeof resetLiveZoom === 'function') track.querySelectorAll('.live-slide.zoomed').forEach(sl => applyLiveZoom(sl, { s: 1, x: 0, y: 0 }));
+  LiveState.ovLevel = level;
+  LiveState.ovFocus = keep;
+  if (level && !before) track.scrollLeft = 0;   // 옆으로 넘기던 자리는 비우고 칸으로
+  applyLiveOverview(track);
+  setTrackPos(keep);
+  if (!level) updateLiveNow();
+  if (typeof relayoutLiveInk === 'function') requestAnimationFrame(relayoutLiveInk);
+  if (level !== before) {   // 작아지고 커지는 게 보이게
+    track.animate([{ transform: `scale(${level > before ? 1.08 : 0.92})`, opacity: 0.55 }, { transform: 'scale(1)', opacity: 1 }],
+      { duration: 200, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+    if (level && !before) showToast('🔍 한눈에 보기 — 악보를 톡 누르면 크게, 두 손가락으로 벌리면 다시 크게', 'info', 2500);
+  }
 }
 
 /** 다음/이전: 콘티 끝에서 넘기면 다음 콘티로 이어진다 */
@@ -786,6 +836,7 @@ function updateLiveNow() {
 
 function closeLiveViewer() {
   document.getElementById('liveMsg')?.remove();
+  LiveState.ovLevel = 0;
   if (typeof LiveInk !== 'undefined' && LiveInk.on) toggleLiveInk(false);
   const v = document.getElementById('liveViewer');
   if (v) { v.classList.add('hidden'); v.innerHTML = ''; }

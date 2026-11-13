@@ -2462,8 +2462,8 @@ html[data-theme="light"] .live-to-reset { color: #1d4ed8; }
 
 /* 라이브: 두 번 톡 쳐도 확대·이동 안 함 — 두 손가락으로 벌릴 때만 확대 */
 .live-viewer, .live-viewer * { touch-action: manipulation; }
-.live-track:not(.vertical) { touch-action: pan-x pinch-zoom; }
-.live-track.vertical { touch-action: pan-y pinch-zoom; }
+.live-track:not(.vertical) { touch-action: pan-x; }   /* 두 손가락은 앱이 (확대·한눈에 보기) */
+.live-track.vertical { touch-action: pan-y; }
 .live-slide, .live-slide img { touch-action: inherit; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .live-viewer { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 .live-viewer input, .live-viewer textarea { -webkit-user-select: text; user-select: text; }
@@ -2694,7 +2694,7 @@ html[data-theme="light"] .live-ink-width { color: #111; }
 .live-viewer.inking.hand .live-ink { pointer-events: none; }
 .live-viewer.inking.hand .live-track:not(.vertical) .live-slide { touch-action: pan-x; }
 .live-viewer.inking.hand .live-track.vertical .live-slide { touch-action: pan-y; }
-.live-viewer.inking.hand .live-slide.zoomed { touch-action: none; }
+.live-slide.zoomed { touch-action: none; }
 .live-slide.zoomed { overflow: hidden; }
 .live-slide.zoomed img, .live-slide.zoomed .live-ink { will-change: transform; }
 html[data-theme="light"] .live-ink-grip { color: #888; }
@@ -2703,3 +2703,17 @@ html[data-theme="light"] .live-ink-grip { color: #888; }
   box-shadow: 0 0 0 3px rgba(34,197,94,.35); transition: transform .12s ease, box-shadow .12s ease; }
 .live-set-tab.drop-target::after { content: ' ＋'; font-weight: 800; }
 .live-drag-ghost.dropping.into { scale: .3; opacity: 0; }
+
+/* 🔍 한눈에 보기: 두 손가락으로 오므리면 악보들이 작아져 여러 칸으로 */
+.live-track.overview { display: grid !important; grid-template-columns: repeat(var(--ov-cols, 2), minmax(0, 1fr)); gap: 12px; padding: 12px;
+  overflow-x: hidden; overflow-y: auto; scroll-snap-type: none; align-content: start; background: #23232c; touch-action: pan-y; }
+.live-track.overview .live-slide { width: auto; height: auto; flex: none; overflow: hidden; scroll-snap-align: none; border: 0;
+  background: #fff; border-radius: 8px; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,.35); touch-action: pan-y;
+  display: block; padding-bottom: 22px; transition: outline-color .15s; outline: 3px solid transparent; outline-offset: 2px; }
+.live-track.overview .live-slide img { width: 100%; height: auto; max-width: none; max-height: none; margin: 0; transform: none !important; }
+.live-track.overview .live-ink { pointer-events: none !important; transform: none !important; }
+.live-track.overview .live-slide::after { content: attr(data-title); position: absolute; left: 0; right: 0; bottom: 0; height: 22px; line-height: 22px;
+  padding: 0 8px; font-size: 11px; font-weight: 600; color: #333; background: #f1f2f6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-track.overview .live-slide.ov-cur { outline-color: var(--accent); }
+.live-viewer.ov .live-nav { display: none; }
+html[data-theme="light"] .live-track.overview { background: #e6e7ec; }

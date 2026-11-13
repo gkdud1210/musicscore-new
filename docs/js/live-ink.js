@@ -393,40 +393,72 @@ function liveTouchInfo() {
 
 function liveZoomStart(slide) {
   LiveTouch.slide = slide;
-  LiveTouch.start = { ...liveTouchInfo(), z: { ...zoomOf(slide) }, base: liveImgBase(slide), n: LiveTouch.pts.size };
+  LiveTouch.start = { ...liveTouchInfo(), z: { ...(slide ? zoomOf(slide) : { s: 1, x: 0, y: 0 }) }, base: slide ? liveImgBase(slide) : null, moved: false };
 }
 
+/** 손가락으로 확대·축소할 수 있을 때: 라이브 화면에서, 필기 중이면 ✋ 일 때만 (한눈에 보기에서는 언제나) */
+const liveGestureOn = () => LiveState.viewerOpen && (!LiveInk.on || LiveInk.hand || !!liveOverview());
+
 document.addEventListener('pointerdown', e => {
-  if (!LiveInk.on || !LiveInk.hand || e.pointerType === 'mouse') return;
-  const slide = e.target.closest?.('#liveTrack .live-slide');
-  if (!slide) return;
+  if (e.pointerType === 'mouse' || !liveGestureOn()) return;
+  if (!e.target.closest?.('#liveTrack')) return;
   LiveTouch.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (LiveTouch.pts.size > 2) return;
-  liveZoomStart(slide);
+  liveZoomStart(liveOverview() ? null : e.target.closest('.live-slide'));
 });
 
 document.addEventListener('pointermove', e => {
-  if (!LiveTouch.pts.has(e.pointerId) || !LiveTouch.slide) return;
+  if (!LiveTouch.pts.has(e.pointerId) || !LiveTouch.start) return;
   LiveTouch.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
   const st = LiveTouch.start;
   const now = liveTouchInfo();
+  if (Math.hypot(now.mx - st.mx, now.my - st.my) > 8 || (st.d && Math.abs(now.d - st.d) > 8)) st.moved = true;
   const z0 = st.z;
   if (LiveTouch.pts.size >= 2 && st.d) {
-    // 두 손가락 가운데 점이 손가락을 따라가게 확대·축소
-    const s = Math.min(Math.max(z0.s * now.d / st.d, 1), 6);
-    const ux = (st.mx - st.base.x - z0.x) / z0.s, uy = (st.my - st.base.y - z0.y) / z0.s;
-    applyLiveZoom(LiveTouch.slide, { s, x: now.mx - st.base.x - ux * s, y: now.my - st.base.y - uy * s });
     e.preventDefault();
-  } else if (LiveTouch.pts.size === 1 && z0.s > 1) {
+    const ratio = now.d / st.d;
+    const level = LiveState.ovLevel || 0;
+    if (level) {   // 한눈에 보기: 오므리면 더 작게(칸 늘리기), 벌리면 더 크게 → 한 장씩
+      if (ratio < 0.75) { setLiveOverview(level + 1); liveZoomStart(null); }
+      else if (ratio > 1.33) {
+        const under = document.elementFromPoint(now.mx, now.my)?.closest?.('#liveTrack .live-slide');
+        setLiveOverview(level - 1, level === 1 && under ? Number(under.dataset.index) : null);
+        liveZoomStart(level === 1 && under ? under : null);
+      }
+      return;
+    }
+    const slide = LiveTouch.slide;
+    const s = z0.s * ratio;
+    if (s < 0.72) {   // 크기 1에서 더 오므리면 → 한눈에 보기
+      if (slide) applyLiveZoom(slide, { s: 1, x: 0, y: 0 });
+      setLiveOverview(1);
+      liveZoomStart(null);
+      return;
+    }
+    if (!slide || !st.base) return;
+    // 두 손가락 가운데 점이 손가락을 따라가게 확대·축소
+    const sc = Math.min(Math.max(s, 1), 6);
+    const ux = (st.mx - st.base.x - z0.x) / z0.s, uy = (st.my - st.base.y - z0.y) / z0.s;
+    applyLiveZoom(slide, { s: sc, x: now.mx - st.base.x - ux * sc, y: now.my - st.base.y - uy * sc });
+  } else if (LiveTouch.pts.size === 1 && LiveTouch.slide && z0.s > 1) {
     applyLiveZoom(LiveTouch.slide, { s: z0.s, x: z0.x + now.mx - st.mx, y: z0.y + now.my - st.my });
     e.preventDefault();
   }
 }, { passive: false });
 
 function liveTouchEnd(e) {
-  if (!LiveTouch.pts.delete(e.pointerId)) return;
-  if (LiveTouch.pts.size && LiveTouch.slide) { liveZoomStart(LiveTouch.slide); return; }   // 한 손가락 남으면 그걸로 이어서 옮기기
+  if (!LiveTouch.pts.has(e.pointerId)) return;
+  const tap = LiveTouch.pts.size === 1 && LiveTouch.start && !LiveTouch.start.moved;
+  const slide = LiveTouch.slide;
+  LiveTouch.pts.delete(e.pointerId);
+  if (LiveTouch.pts.size) { liveZoomStart(LiveTouch.slide); return; }   // 한 손가락 남으면 그걸로 이어서 옮기기
   LiveTouch.slide = null;
+  LiveTouch.start = null;
+  // 확대된 악보를 두 번 톡 → 원래 크기로
+  if (tap && slide && e.type === 'pointerup') {
+    if (Date.now() - (LiveTouch.lastTap || 0) < 320 && zoomOf(slide).s > 1) { applyLiveZoom(slide, { s: 1, x: 0, y: 0 }); LiveTouch.lastTap = 0; }
+    else LiveTouch.lastTap = Date.now();
+  }
   const bar = document.getElementById('liveInkBar');
   if (bar && !!bar.querySelector('[data-live="ink-zoom-reset"]') !== liveZoomed()) renderLiveInkBar();
 }
