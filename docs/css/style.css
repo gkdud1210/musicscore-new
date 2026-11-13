@@ -2616,6 +2616,9 @@ html[data-theme="light"] .live-set-x { background: #d92d43; }
 
 /* 📋 붙여넣은 사진: 🗑 지우기 · 💾 콘티로 담기 */
 .live-song-chip.paste-tool { border-color: var(--accent); color: #fff; font-weight: 600; }
-.live-song-chip.paste-tool.danger { border-color: #e5384f; color: #ff8a98; }
+.live-chip-wrap { display: inline-flex; flex-shrink: 0; align-items: stretch; }
+.live-chip-wrap .live-song-chip { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: 0; }
+.live-chip-x { flex-shrink: 0; background: #b42a3c; color: #fff; border: 1px solid #e5384f; border-radius: 0 999px 999px 0;
+  padding: 0 10px 0 8px; font-size: 12px; font-weight: 800; cursor: pointer; }
+html[data-theme="light"] .live-chip-x { background: #d92d43; }
 html[data-theme="light"] .live-song-chip.paste-tool { color: var(--accent); }
-html[data-theme="light"] .live-song-chip.paste-tool.danger { color: #d92d43; }

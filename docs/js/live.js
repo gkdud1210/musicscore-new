@@ -192,9 +192,6 @@ async function pickLivePhoto() {
 /* ── 붙여넣은 사진 정리: 🗑 지우기(모두의 화면에서) · 💾 콘티로 담기(콘티 목록에 새 콘티로) ─────── */
 const LIVE_PASTE_KEY = 'paste';
 
-function pasteToolsHtml() {
-  return LiveState.live?.can_edit ? '<button type="button" class="live-song-chip paste-tool danger" data-live="photo-del" title="보고 있는 사진을 지워요 (모두의 화면에서 빠져요)">🗑 이 사진 지우기</button>' : '';
-}
 
 /** 🎼 새 콘티에 담기 칩: 보고 있는 콘티의 곡들을 아래 "🎼 담은 곡"(새 콘티)에. 붙여넣은 사진은 관리자만 (먼저 콘티로 저장해야 해서) */
 function toSetlistChipHtml(set) {
@@ -227,28 +224,25 @@ async function liveSetToSetlist() {
     : '이 콘티의 곡은 이미 다 담겨 있어요.', added ? 'success' : 'info', added ? 6000 : 3000);
 }
 
-/** 보고 있는 사진 → 서버 이름 (/api/live/photo/<name>.jpg) */
-function curPastePhoto() {
-  const sl = LiveState.slides?.[liveIndex()];
-  const m = sl && /\/api\/live\/photo\/([a-z0-9-]+)\.jpg$/.exec(sl.url);
-  return m ? { name: m[1], title: sl.song.title } : null;
-}
-
-async function deleteLivePhoto() {
-  const p = curPastePhoto();
-  if (!p) return;
-  if (!confirm(`"${p.title}"을(를) 지울까요?\n모두의 화면에서 빠져요.`)) return;
+/** 붙여넣은 사진 이름 옆 ✕: 그 사진을 지운다 (모두의 화면에서 빠져요) */
+async function deleteLivePhoto(si) {
+  const V = LiveState.viewing;
+  const song = V?.sets[V.cur]?.songs[si];
+  const m = song && /\/api\/live\/photo\/([a-z0-9-]+)\.jpg$/.exec(song.image_urls[0] || '');
+  if (!m || LiveState.deletingPhoto) return;
+  LiveState.deletingPhoto = true;
   try {
     const at = liveIndex();
-    const { live } = await apiJson(`/api/live/photo/${p.name}`, { method: 'DELETE' });
+    const { live } = await apiJson(`/api/live/photo/${m[1]}`, { method: 'DELETE' });
     LiveState.live = live;
-    const V = LiveState.viewing;
-    V.pos[LIVE_PASTE_KEY] = at;   // 다음 사진으로 (마지막이었으면 앞 사진)
+    V.pos[LIVE_PASTE_KEY] = at > si ? at - 1 : at;   // 보던 사진 그대로 (지운 게 보던 사진이면 다음 사진)
     syncLiveViewerQuiet(live);
     renderLiveSet();
-    showToast('🗑 사진을 지웠어요.', 'success');
+    showToast(`✕ "${song.title}"을(를) 지웠어요.`, 'success');
   } catch (e) {
     showToast('사진 지우기 실패: ' + e.message, 'error');
+  } finally {
+    LiveState.deletingPhoto = false;
   }
 }
 
@@ -574,6 +568,7 @@ function renderLiveSet() {
   LiveState.slides = slides;
   const live = LiveState.live;
   const server = !V.local && live && live.id === V.id;
+  const photoX = server && set.key === LIVE_PASTE_KEY && live.can_edit;   // 붙여넣은 사진: 이름 옆 ✕ 로 지우기
   v.classList.toggle('top-min', liveTopMin());
   v.innerHTML = `
     <div class="live-top">
@@ -593,9 +588,13 @@ function renderLiveSet() {
     <div class="live-add hidden" id="liveAdd"></div>
     <div class="live-add live-msg-panel hidden" id="liveMsgPanel"></div>
     <div class="live-songs" id="liveSongs">
-      ${toSetlistChipHtml(set)}${server && set.key === LIVE_PASTE_KEY ? pasteToolsHtml() : ''}
-      ${set.songs.map((s, i) => `<button type="button" class="live-song-chip" data-live="jump" data-song="${i}">
-        ${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</button>`).join('')}
+      ${toSetlistChipHtml(set)}
+      ${set.songs.map((s, i) => {
+        const chip = `<button type="button" class="live-song-chip" data-live="jump" data-song="${i}">
+        ${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}</button>`;
+        return photoX ? `<span class="live-chip-wrap">${chip}<button type="button" class="live-chip-x" data-live="photo-del" data-song="${i}"
+          title="이 사진 지우기 (모두의 화면에서 빠져요)" aria-label="${escapeHtml(s.title)} 지우기">✕</button></span>` : chip;
+      }).join('')}
     </div>
     <div class="live-track${liveVertical() ? ' vertical' : ''}" id="liveTrack">
       ${slides.map((sl, i) => `<div class="live-slide" data-index="${i}">
@@ -1198,7 +1197,7 @@ document.addEventListener('click', e => {
     case 'quick-save': saveQuickMessages(); break;
     case 'notify': notifyLive(); break;
     case 'paste': pickLivePhoto(); break;
-    case 'photo-del': deleteLivePhoto(); break;
+    case 'photo-del': deleteLivePhoto(Number(el.dataset.song)); break;
     case 'to-setlist': liveSetToSetlist(); break;
     case 'dismiss':
       if (LiveState.live) { setLiveSeen(LiveState.live.id); setFocusSeen(LiveState.live); setInviteSeen(LiveState.live); }
