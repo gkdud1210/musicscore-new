@@ -706,7 +706,8 @@ function renderSongVersion(s, same = [s], extraBtn = '') {
           ${addButton(s)}
           ${isPhpServer() ? `<button type="button" class="btn-sm" data-live="to-live-song" data-id="${s.id}" data-title="${escapeHtml(s.title)}" title="이 악보를 라이브에 넣어요 (라이브 중이면 어느 콘티에 넣을지 골라요)">📡 라이브에</button>` : ''}
           <button class="btn-sm admin-only" data-action="edit-song" data-id="${s.id}">✏️ 수정</button>
-          <a class="btn-sm" href="viewer.html?id=${s.score_id}&page=${s.page_start}">✍️ 필기</a>
+          ${isPhpServer() ? `<button type="button" class="btn-sm" data-live="open-ink-song" data-id="${s.id}" title="라이브 화면처럼 확대·축소하며 펜·형광펜으로 쓰기">✍️ 필기</button>`
+            : `<a class="btn-sm" href="viewer.html?id=${s.score_id}&page=${s.page_start}">✍️ 필기</a>`}
         </div>
       </div>
       ${usedIn}
@@ -874,7 +875,8 @@ function renderContis() {
         <button class="btn-sm" data-action="open-conti" data-id="${c.id}">${AuthState.canEdit ? '🧩 곡 나누기·수정' : '📄 악보 보기'}</button>
         <button class="btn-sm" data-action="add-conti" data-id="${c.id}">＋ 전체 담기</button>
         ${isPhpServer() ? `<button type="button" class="btn-sm" data-live="to-live-conti" data-id="${c.id}" title="이 콘티를 라이브에 넣어요 (라이브 중이면 새 탭으로 또는 어느 콘티에 넣을지 골라요)">📡 라이브에</button>` : ''}
-        <a class="btn-sm" href="viewer.html?id=${c.id}">✍️ 필기</a>
+        ${isPhpServer() ? `<button type="button" class="btn-sm" data-live="open-ink-conti" data-id="${c.id}" title="라이브 화면처럼 확대·축소하며 펜·형광펜으로 쓰기">✍️ 필기</button>`
+          : `<a class="btn-sm" href="viewer.html?id=${c.id}">✍️ 필기</a>`}
         <button class="btn-sm admin-only" data-action="delete-conti" data-id="${c.id}">🗑️</button>
       </div>
     </div>`;
@@ -974,7 +976,8 @@ function renderContiModal(conti, songs) {
       <input type="text" name="title" class="lib-edit-title-input conti-title-input" value="${escapeHtml(conti.title)}" />
       <input type="date" name="conti_date" class="lib-edit-title-input" value="${escapeHtml(conti.conti_date || '')}" />
     </form>
-    <div class="now-row"><button type="button" class="btn-now" data-live="send-conti">📡 NOW · 지금 이 콘티 띄우기</button></div>
+    <div class="now-row"><button type="button" class="btn-now" data-live="send-conti">📡 NOW · 지금 이 콘티 띄우기</button>
+      ${isPhpServer() ? `<button type="button" class="btn-sm" data-live="open-ink-conti" data-id="${conti.id}" title="라이브 화면처럼 확대·축소하며 펜·형광펜으로 쓰기">✍️ 필기</button>` : ''}</div>
     <p class="lib-modal-sub">
       자동으로 나눈 곡이 틀렸다면 여기서 고쳐주세요. 표지·순서지 페이지는 "곡에서 빼기"를 누르면 검색에 안 나와요.
       <button class="btn-link" data-action="reprocess" data-id="${conti.id}">처음부터 다시 분석${LibState.engine === 'gemini' ? ' (✨ 제미나이)' : ''}</button>
@@ -1271,7 +1274,8 @@ function renderContiModalReadOnly(conti, songs) {
     <h2 class="lib-modal-title">${escapeHtml(conti.title)}</h2>
     <p class="lib-modal-sub">${conti.conti_date ? `📅 ${escapeHtml(conti.conti_date)} · ` : ''}${songs.length}곡</p>
     ${markPicker(contiMarkKey(conti.id))}
-    <div class="now-row"><button type="button" class="btn-now" data-live="send-conti">📡 NOW · 지금 이 콘티 띄우기</button></div>
+    <div class="now-row"><button type="button" class="btn-now" data-live="send-conti">📡 NOW · 지금 이 콘티 띄우기</button>
+      ${isPhpServer() ? `<button type="button" class="btn-sm" data-live="open-ink-conti" data-id="${conti.id}" title="라이브 화면처럼 확대·축소하며 펜·형광펜으로 쓰기">✍️ 필기</button>` : ''}</div>
     ${contiViewBar()}
     <div class="conti-songs-wrap" id="contiSongsWrap">
     ${songs.map((s, i) => `

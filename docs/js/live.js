@@ -1185,6 +1185,26 @@ async function liveSetFromConti(contiId, title) {
   return { title, conti_id: contiId, songs: songs.map(s => ({ id: s.id, title: s.title, key: s.key, image_urls: s.image_urls })) };
 }
 
+/** ✍️ 라이브러리에서 필기: 라이브와 똑같은 화면(확대·축소·한눈에 보기·형광펜·도구 창)을 혼자 보기로 열고 필기를 켠다.
+ * 쓴 필기는 라이브·PDF 내보내기와 같은 곳에 남는다. 닫으면 보던 라이브러리 화면으로 */
+async function openInkViewer(kind, id) {
+  try {
+    let set;
+    if (kind === 'conti') {
+      const c = (typeof LibState !== 'undefined' && LibState.contis || []).find(x => x.id === id);
+      set = await liveSetFromConti(id, c?.songs?.length ? contiDisplayName(c) : c?.title || '콘티');
+    } else {
+      set = await liveSetFromSongIds([id], '악보');
+      set.title = set.songs[0]?.title || '악보';
+    }
+    if (!set.songs.length) { showToast('필기할 악보가 없어요.', 'info'); return; }
+    openLiveViewer({ id: `local-ink-${kind}-${id}`, title: set.title, sets: [set] });
+    if (typeof toggleLiveInk === 'function' && !LiveInk.on) toggleLiveInk(true);
+  } catch (e) {
+    showToast('필기 열기 실패: ' + e.message, 'error');
+  }
+}
+
 async function liveSetFromSongIds(ids, title) {
   const songs = await Promise.all(ids.map(id => apiJson(`/api/songs/${id}`).catch(() => null)));
   return { title, songs: songs.filter(Boolean).map(s => ({ id: s.id, title: s.title, key: s.key, image_urls: s.image_urls })) };
@@ -1492,6 +1512,8 @@ document.addEventListener('click', e => {
     }
     case 'send-conti': sendLiveFromConti(); break;
     case 'to-live-conti': liveAddFromLibrary('conti', Number(el.dataset.id)); break;
+    case 'open-ink-song': openInkViewer('song', Number(el.dataset.id)); break;
+    case 'open-ink-conti': openInkViewer('conti', Number(el.dataset.id)); break;
     case 'to-live-song': liveAddFromLibrary('song', Number(el.dataset.id), el.dataset.title); break;
     case 'pick-new': liveAddPicked(null); break;
     case 'pick-into': liveAddPicked(el.dataset.key); break;
