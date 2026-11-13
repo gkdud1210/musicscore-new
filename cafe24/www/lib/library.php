@@ -1293,6 +1293,49 @@ function api_remove_live_set($key): array
     return ['live' => live_public($live)];
 }
 
+/** 꾹 눌러 옮긴 순서대로 다시 놓기: $want 에 적힌 것부터 그 순서로, 빠진 것(그 사이 더해진 것)은 뒤에 원래 순서로 */
+function live_reorder(array $items, array $want, callable $id): array
+{
+    $pos = array_flip(array_values(array_map('strval', $want)));
+    $keyed = [];
+    foreach ($items as $n => $it) $keyed[] = [$pos[(string)$id($it)] ?? (10000 + $n), $it];
+    usort($keyed, fn($a, $b) => $a[0] <=> $b[0]);
+    return array_column($keyed, 1);
+}
+
+/** ↔ 라이브 콘티 순서 바꾸기 (모두의 화면에서) */
+function api_order_live_sets(): array
+{
+    $keys = (array)(body_json()['keys'] ?? []);
+    $live = live_update(function (?array $live) use ($keys) {
+        $live = live_require_editor($live);
+        $live['sets'] = live_reorder($live['sets'], $keys, fn($st) => $st['key']);
+        return $live;
+    });
+    return ['live' => live_public($live)];
+}
+
+/** ↔ 라이브 콘티 안의 악보 순서 바꾸기 (곡마다 첫 쪽 주소로 알아본다) */
+function api_order_live_songs($key): array
+{
+    $key = (string)$key;
+    $urls = (array)(body_json()['urls'] ?? []);
+    $live = live_update(function (?array $live) use ($key, $urls) {
+        $live = live_require_editor($live);
+        $i = array_search($key, array_column($live['sets'], 'key'), true);
+        if ($i === false) throw new ApiError(404, '라이브에 없는 콘티예요');
+        $songs = $live['sets'][$i]['songs'];
+        $focusUrl = ($live['focus']['key'] ?? null) === $key ? ($songs[(int)$live['focus']['song']]['image_urls'][0] ?? null) : null;
+        $songs = live_reorder($songs, $urls, fn($s) => $s['image_urls'][0] ?? '');
+        $live['sets'][$i]['songs'] = $songs;
+        if ($focusUrl !== null) {   // 알림주기한 곡은 옮겨진 자리로
+            foreach ($songs as $n => $s) if (($s['image_urls'][0] ?? null) === $focusUrl) $live['focus']['song'] = $n;
+        }
+        return $live;
+    });
+    return ['live' => live_public($live)];
+}
+
 function live_invite_now(): array
 {
     return ['ts' => (int)(microtime(true) * 1000), 'from' => sender_name()];

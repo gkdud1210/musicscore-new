@@ -597,6 +597,7 @@ function renderLiveSet() {
       ${server ? '<button type="button" class="live-top-btn notify" data-live="notify" title="지금 보고 있는 콘티·곡으로 모두의 화면을 넘겨요">📣 알림주기</button>' : ''}
       ${server ? '<button type="button" class="live-top-btn" data-live="paste" title="복사한 사진을 모두의 화면에 띄워요 (Ctrl/⌘+V 로 붙여넣어도 돼요)">📋 사진</button>' : ''}
       ${server ? '<button type="button" class="live-top-btn msg" data-live="msg" title="라이브 보는 모두의 악보 위에 메세지 띄우기">💬 메세지</button>' : ''}
+      <button type="button" class="live-top-btn${typeof LiveInk !== 'undefined' && LiveInk.on ? ' active' : ''}" data-live="ink" title="악보 위에 펜·형광펜으로 쓰기 (팀 모두의 같은 악보에 남아요)">✍️ 필기</button>
       <button type="button" class="live-top-btn" data-live="scroll-mode" title="${liveVertical() ? '옆으로 넘기기로 바꾸기' : '밑으로 스크롤로 바꾸기'}">${liveVertical() ? '↕ 스크롤' : '↔ 넘기기'}</button>
       <button type="button" class="live-top-btn" data-live="fullscreen" title="전체 화면">⛶</button>
       ${!server ? '<button type="button" class="live-top-btn" data-live="close" aria-label="닫기">✕</button>'
@@ -637,6 +638,7 @@ function renderLiveSet() {
     raf = requestAnimationFrame(updateLiveNow);
   }, { passive: true });
   updateLiveNow();
+  if (typeof liveInkAttach === 'function') liveInkAttach();   // ✍️ 필기 (live-ink.js)
 }
 
 function switchLiveSetKey(key, at = 'keep') {
@@ -744,6 +746,7 @@ function updateLiveNow() {
 
 function closeLiveViewer() {
   document.getElementById('liveMsg')?.remove();
+  if (typeof LiveInk !== 'undefined' && LiveInk.on) toggleLiveInk(false);
   const v = document.getElementById('liveViewer');
   if (v) { v.classList.add('hidden'); v.innerHTML = ''; }
   LiveState.viewerOpen = false;
@@ -1178,6 +1181,8 @@ async function saveQuickMessages() {
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-live]');
   if (!el) return;
+  if (Date.now() - LiveDrag.dropped < 400 && el.closest('#liveSets, #liveSongs')) return;   // 꾹 눌러 옮긴 뒤 놓은 것
+  if (/^ink/.test(el.dataset.live) && typeof liveInkAction === 'function' && liveInkAction(el.dataset.live, el)) return;
   switch (el.dataset.live) {
     case 'ok': {
       openLiveViewer();
@@ -1273,10 +1278,134 @@ document.addEventListener('keydown', e => {
   if (e.key === 'ArrowUp') { e.preventDefault(); switchLiveSet((LiveState.viewing?.cur ?? 0) - 1, 'first'); }
   if (/^[1-9]$/.test(e.key)) switchLiveSet(Number(e.key) - 1);
   if (e.key === 'Escape') {
+    if (typeof LiveInk !== 'undefined' && LiveInk.on) { toggleLiveInk(false); return; }
     if (document.getElementById('liveMsg')) { document.getElementById('liveMsg').remove(); return; }
     closeLiveViewer();
   }
 });
+
+/* ── ↔ 꾹 눌러 옮기기: 콘티 탭·악보 이름을 꾹 누른 채 끌어서 순서 바꾸기 ───────────────
+ * 함께 보는 라이브면 모두의 화면 순서가 바뀌고, 혼자 보기·내 화면에만 더한 콘티는 내 화면에서만. */
+const LiveDrag = { timer: 0, active: false, kind: null, el: null, x: 0, y: 0, dropped: 0 };
+
+function liveDragTarget(t) {
+  const V = LiveState.viewing;
+  if (!V || typeof t?.closest !== 'function') return null;
+  const shared = !V.local && LiveState.live?.can_edit;
+  const tab = t.closest('#liveSets .live-set-tab:not(.add)');
+  if (tab) return V.sets.length > 1 && (V.local || shared) ? { kind: 'set', el: tab.closest('.live-set-wrap') || tab } : null;
+  const chip = t.closest('#liveSongs .live-song-chip[data-live="jump"]');
+  const set = V.sets[V.cur];
+  if (chip) return set?.songs.length > 1 && (V.local || set.mine || shared) ? { kind: 'song', el: chip.closest('.live-chip-wrap') || chip } : null;
+  return null;
+}
+
+function liveDragEnd() {
+  clearTimeout(LiveDrag.timer);
+  LiveDrag.el?.classList.remove('dragging');
+  document.getElementById('liveViewer')?.classList.remove('reordering');
+  const was = LiveDrag.active ? LiveDrag.kind : null;
+  LiveDrag.active = false;
+  LiveDrag.el = null;
+  return was;
+}
+
+document.addEventListener('pointerdown', e => {
+  if (!LiveState.viewerOpen || e.button > 0) return;
+  const hit = liveDragTarget(e.target);
+  if (!hit) return;
+  liveDragEnd();
+  Object.assign(LiveDrag, { kind: hit.kind, el: hit.el, x: e.clientX, y: e.clientY });
+  LiveDrag.timer = setTimeout(() => {
+    LiveDrag.active = true;
+    hit.el.classList.add('dragging');
+    document.getElementById('liveViewer')?.classList.add('reordering');
+    navigator.vibrate?.(25);
+  }, 380);
+});
+
+document.addEventListener('pointermove', e => {
+  if (!LiveDrag.el) return;
+  if (!LiveDrag.active) {   // 꾹 누르기 전에 움직이면 = 스크롤
+    if (Math.hypot(e.clientX - LiveDrag.x, e.clientY - LiveDrag.y) > 8) liveDragEnd();
+    return;
+  }
+  e.preventDefault();
+  const el = LiveDrag.el;
+  const row = el.parentElement;
+  // 악보 이름 줄은 옆으로 넘치니 가장자리에 가면 저절로 밀기
+  const rr = row.getBoundingClientRect();
+  if (e.clientX < rr.left + 36) row.scrollLeft -= 12;
+  else if (e.clientX > rr.right - 36) row.scrollLeft += 12;
+  const over = liveDragTarget(document.elementFromPoint(e.clientX, e.clientY));
+  if (!over || over.kind !== LiveDrag.kind || over.el === el || over.el.parentElement !== row) return;
+  const r = over.el.getBoundingClientRect();
+  row.insertBefore(el, e.clientX < r.left + r.width / 2 ? over.el : over.el.nextSibling);
+}, { passive: false });
+
+// 끄는 동안 화면이 스크롤되거나 길게 누르기 메뉴가 뜨지 않게
+document.addEventListener('touchmove', e => { if (LiveDrag.active) e.preventDefault(); }, { passive: false });
+document.addEventListener('contextmenu', e => {
+  if (LiveState.viewerOpen && e.target.closest?.('#liveSets, #liveSongs')) e.preventDefault();
+});
+document.addEventListener('pointercancel', () => { if (!LiveDrag.active) liveDragEnd(); });
+document.addEventListener('pointerup', () => {
+  const kind = liveDragEnd();
+  if (!kind) return;
+  LiveDrag.dropped = Date.now();   // 놓을 때 생기는 클릭은 무시
+  if (kind === 'set') commitLiveSetOrder(); else commitLiveSongOrder();
+});
+
+async function commitLiveSetOrder() {
+  const V = LiveState.viewing;
+  const order = [...document.querySelectorAll('#liveSets .live-set-tab:not(.add)')].map(t => V.sets[Number(t.dataset.set)]).filter(Boolean);
+  if (order.length !== V.sets.length || order.every((st, i) => st === V.sets[i])) { renderLiveTabs(); return; }
+  const curKey = V.sets[V.cur]?.key;
+  V.sets = order;
+  V.cur = Math.max(0, V.sets.findIndex(st => st.key === curKey));
+  renderLiveTabs();
+  if (V.local || !V.sets.some(st => !st.mine)) return;
+  try {
+    const { live } = await apiJson('/api/live/sets/order', jsonBody('POST', { keys: V.sets.filter(st => !st.mine).map(st => st.key) }));
+    LiveState.live = live;
+    syncLiveViewerQuiet(live);
+    renderLiveTabs();
+    showToast('↔ 콘티 순서를 바꿨어요. 모두의 화면에서 같이 바뀌어요.', 'success', 2500);
+  } catch (e) {
+    showToast('순서 바꾸기 실패: ' + e.message, 'error');
+    if (LiveState.live) { syncLiveViewerQuiet(LiveState.live); renderLiveTabs(); }
+  }
+}
+
+async function commitLiveSongOrder() {
+  const V = LiveState.viewing;
+  const set = V.sets[V.cur];
+  const order = [...document.querySelectorAll('#liveSongs .live-song-chip[data-live="jump"]')].map(c => set.songs[Number(c.dataset.song)]).filter(Boolean);
+  if (order.length !== set.songs.length || order.every((s, i) => s === set.songs[i])) { renderLiveSet(); return; }
+  // 보던 쪽 그대로: 그 곡의 그 쪽으로
+  const cur = (LiveState.slides || [])[liveIndex()];
+  const keepPos = () => {
+    const st = V.sets[V.cur];
+    const i = liveSlides(st).findIndex(sl => sl.song.image_urls[0] === cur?.song.image_urls[0] && sl.pi === cur?.pi);
+    V.pos[st.key] = Math.max(0, i);
+  };
+  set.songs = order;
+  keepPos();
+  renderLiveSet();
+  if (V.local || set.mine) return;
+  try {
+    const { live } = await apiJson(`/api/live/sets/${encodeURIComponent(set.key)}/order`,
+      jsonBody('POST', { urls: order.map(s => s.image_urls[0] || '') }));
+    LiveState.live = live;
+    syncLiveViewerQuiet(live);
+    keepPos();
+    renderLiveSet();
+    showToast('↔ 악보 순서를 바꿨어요. 모두의 화면에서 같이 바뀌어요.', 'success', 2500);
+  } catch (e) {
+    showToast('순서 바꾸기 실패: ' + e.message, 'error');
+    if (LiveState.live) { syncLiveViewerQuiet(LiveState.live); renderLiveSet(); }
+  }
+}
 
 /* 라이브 화면: 한 손가락으로 두 번 톡 → 확대 막기 (두 손가락 확대는 그대로) */
 (() => {
