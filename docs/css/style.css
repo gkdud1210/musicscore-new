@@ -2622,3 +2622,20 @@ html[data-theme="light"] .live-set-x { background: #d92d43; }
   padding: 0 10px 0 8px; font-size: 12px; font-weight: 800; cursor: pointer; }
 html[data-theme="light"] .live-chip-x { background: #d92d43; }
 html[data-theme="light"] .live-song-chip.paste-tool { color: var(--accent); }
+
+/* 콘티 탭: 이름이 길면 …로 줄여서 한 화면에 다 보이게 (넘치면 다음 줄로) */
+.live-sets { flex-wrap: wrap; overflow-x: visible; row-gap: 6px; }
+.live-set-wrap { flex: 1 1 96px; min-width: 0; max-width: 240px; }
+.live-set-wrap .live-set-tab { flex: 1 1 auto; min-width: 0; }
+.live-set-tab:not(.add) { display: inline-flex; align-items: baseline; min-width: 0; padding: 7px 10px; font-size: 13px; }
+.live-set-tab .live-set-name { font-weight: inherit; font-size: inherit; opacity: 1; margin-left: 0; }
+.live-set-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-set-tab .live-set-n { flex-shrink: 0; margin-left: 4px; }
+.live-set-tab.add { padding: 7px 10px; font-size: 13px; }
+.live-set-x { padding: 0 9px; }
+@media (max-width: 600px) {
+  .live-sets { padding: 6px 8px 4px; gap: 5px; }
+  .live-set-tab .live-set-n { display: none; }   /* 휴대폰: 곡 수는 빼고 이름을 더 (마우스 올리면 전체 이름·곡 수) */
+  .live-set-tab:not(.add) { padding: 7px 8px; }
+  .live-set-x { padding: 0 7px; font-size: 11px; }
+}

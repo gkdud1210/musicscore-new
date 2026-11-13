@@ -572,7 +572,7 @@ function renderLiveTabs() {
   const canRemove = st => V.sets.length > 1 && (st.mine || V.local || shared);
   box.innerHTML = `
       ${V.sets.map((st, i) => `<span class="live-set-wrap${canRemove(st) ? ' has-x' : ''}"><button type="button" role="tab" aria-selected="${i === V.cur}" class="live-set-tab${i === V.cur ? ' active' : ''}${st.mine ? ' mine' : ''}${!V.local && live?.focus?.key === st.key ? ' focus' : ''}"
-          data-live="set" data-set="${i}">${i + 1}. ${escapeHtml(st.title)} <span>${st.songs.length}곡</span></button>${canRemove(st)
+          data-live="set" data-set="${i}" title="${escapeHtml(st.title)} (${st.songs.length}곡)"><span class="live-set-name">${i + 1}. ${escapeHtml(st.title)}</span><span class="live-set-n">${st.songs.length}곡</span></button>${canRemove(st)
           ? `<button type="button" class="live-set-x" data-live="remove-set" data-set="${i}" title="${st.mine || V.local ? '이 콘티 빼기 (내 화면에서만)' : '이 콘티 빼기 (모두의 화면에서 빠져요)'}" aria-label="${escapeHtml(st.title)} 빼기">✕</button>` : ''}</span>`).join('')}
       <button type="button" class="live-set-tab add" data-live="add-set" title="${shared ? '콘티를 더하면 모두의 화면에 같이 생겨요' : '다른 콘티도 위에 추가해서 보기 (내 화면에만)'}">＋ 콘티</button>`;
   box.querySelector('.live-set-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'center' });
