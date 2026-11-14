@@ -30,6 +30,7 @@ const LibState = {
   contiMark: null,        // 콘티 목록 즐겨찾기 필터
   contiKind: null,        // null(전체) | 'combo'(🧩 배합만) | 'full'(원래 콘티만)
   contiMarkOpen: null,    // 표시 고르기를 펼친 콘티 id
+  contiWorship: null,     // null(전체) | 'sun'(주일) | 'fri'(금요) | 'special'(특별성회) | 'etc'(기타)
 };
 
 /** 콘티 즐겨찾기는 곡 즐겨찾기와 같은 저장소에 'conti:<id>' 로 */
@@ -763,6 +764,89 @@ const CONTI_CAT_DIM = v => (v === 'before' || v === 'after' ? ['before', 'after'
 const isCombo = c => !!c.combo;
 const contiKindTest = c => !LibState.contiKind || (LibState.contiKind === 'combo') === isCombo(c);
 
+/* ── 예배 종류: 주일 / 금요 / 🔥 특별성회 / 기타 ──
+ * 특별성회 = 금요일·주일 예배가 아닌 날(토요일, 기도원·캠프·집회 …)이거나 제목에 사람 이름(○○목사님, ○○감독님 …)이 있는 콘티.
+ * 관리자가 콘티마다 직접 정할 수 있고(special: true/false), 배합 콘티는 원래 콘티를 따른다. */
+const WORSHIP_LABEL = { sun: '⛪ 주일', fri: '🌙 금요', special: '🔥 특별성회', etc: '기타' };
+const PERSON_TITLE_RE = /(목사|감독|전도사|선교사|장로|권사|집사|교수|박사|사모|강사|간사|선생)님?|형제|자매/;
+const NOT_PERSON_NIM = /(주|하나|예수|성령|아버지|임금|왕)$/;   // 주님·하나님·예수님 … 은 사람 이름이 아님
+const EVENT_RE = /기도원|캠프|수련회|수양회|집회|성회|부흥회|컨퍼런스|세미나|특새|특별|리트릿|retreat|conference/i;
+/** 배합 콘티 제목 "설교 전 느린 곡 — 원래 제목" → "원래 제목" */
+const contiBaseTitle = c => (isCombo(c) && String(c.title || '').includes(' — ') ? String(c.title).split(' — ').slice(1).join(' — ') : String(c.title || '')).trim();
+function hasPersonName(t) {
+  if (PERSON_TITLE_RE.test(t)) return true;
+  return [...t.matchAll(/([가-힣]+)님/g)].some(m => !NOT_PERSON_NIM.test(m[1]));
+}
+/** 요일 말이 없는 제목의 "3월1일 이옥화" 같은 성+이름 세 글자 (띄어 쓴 것만 — "2월20일지성소" 같은 건 아님) */
+const SURNAME_RE = /^[김이박최정강조윤장임한오서신권황안송류전홍고문양손배백허유남심노하곽성차주우구민진나지엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국어은편용예봉경]/;
+function hasBareName(t) {
+  if (/주일|금요|요일|예배/.test(t)) return false;
+  const rest = t.replace(/(\d{2,4}\s*년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일/g, '\n');
+  return rest.split(/\s+/).some(w => /^[가-힣]{3}$/.test(w) && SURNAME_RE.test(w) && rest.includes(' ' + w));
+}
+/** 날짜(YYYY-MM-DD)의 요일. 제목에 '6월13일'처럼 월·일만 있고 연도가 잘못 들어간 경우가 많아서, 그해에 금·일이 아니면 한 해 전도 본다 */
+function worshipDayOf(c, t) {
+  const md = t.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+  const d = c.conti_date && /^\d{4}-\d{2}-\d{2}$/.test(c.conti_date) ? c.conti_date : null;
+  if (!md && !d) return null;
+  const y = d ? +d.slice(0, 4) : new Date().getFullYear();
+  const m = md ? +md[1] : +d.slice(5, 7), day = md ? +md[2] : +d.slice(8, 10);
+  for (const yy of [y, y - 1]) {
+    const w = new Date(yy, m - 1, day).getDay();
+    if (w === 0) return 'sun';
+    if (w === 5) return 'fri';
+  }
+  return 'other';
+}
+/** 제목·날짜만 보고 정한 예배 종류 */
+function autoWorshipKind(c) {
+  const t = contiBaseTitle(c);
+  if (hasPersonName(t) || hasBareName(t) || EVENT_RE.test(t)) return 'special';
+  if (/[월화수목토]요일|[월화수목토]요\s*예배|토요|수요/.test(t)) return 'special';
+  if (/주일/.test(t)) return 'sun';
+  if (/금요|\d\s*일\s*금(?![가-힣])|\(\s*금\s*\)/.test(t)) return 'fri';
+  if (/\(\s*일\s*\)/.test(t)) return 'sun';
+  const w = worshipDayOf(c, t);
+  if (w === 'other') return 'special';
+  return w || 'etc';
+}
+/** 원래 콘티마다 직접 정한 특별성회 (배합 콘티가 따라가게) — renderContis 때 다시 만듦 */
+let SpecialByTitle = new Map();
+function contiSpecialSet(c) {
+  if (c.special === true || c.special === false) return c.special;
+  if (isCombo(c)) {
+    const v = SpecialByTitle.get(`${c.conti_date || ''}|${contiBaseTitle(c)}`);
+    if (v !== undefined) return v;
+  }
+  return null;
+}
+function worshipKind(c) {
+  const set = contiSpecialSet(c);
+  if (set === true) return 'special';
+  const auto = autoWorshipKind(c);
+  if (set === false && auto === 'special') {
+    const w = worshipDayOf(c, contiBaseTitle(c));
+    return w === 'sun' || w === 'fri' ? w : /주일/.test(contiBaseTitle(c)) ? 'sun' : /금/.test(contiBaseTitle(c)) ? 'fri' : 'etc';
+  }
+  return auto;
+}
+const contiWorshipTest = c => !LibState.contiWorship || worshipKind(c) === LibState.contiWorship;
+
+async function toggleContiSpecial(id) {
+  const c = LibState.contis.find(x => x.id === id);
+  if (!c) return;
+  const now = worshipKind(c) === 'special';
+  const auto = autoWorshipKind({ ...c, special: null }) === 'special';
+  const want = !now;
+  const value = want === auto ? null : want;   // 자동과 같으면 '자동'으로 되돌림
+  try {
+    await apiJson(`/api/scores/${id}`, jsonBody('PATCH', { special: value }));
+    c.special = value;
+    renderContis();
+    showToast(want ? '🔥 특별성회에 넣었어요' : '특별성회에서 뺐어요');
+  } catch (e) { showToast(e.message || '바꾸지 못했어요'); }
+}
+
 /** 제목에서 날짜 말 빼기: "11월6일 금요일", "11월 6일(금)", "2026-11-06", "11/6", "금요일" (날짜는 📅 줄에 따로 나옴) */
 function stripTitleDate(t) {
   return String(t || '')
@@ -794,7 +878,14 @@ function renderContiFilters(all) {
         ? '<button type="button" class="btn-sm admin-only combo-make-btn" data-action="make-combos" title="분류(설교 전/후·느린/빠른)가 같은 곡끼리 배합 콘티로 모아요. 겹치는 배합은 하나만 남기고, 원래 콘티는 그대로 둬요">🧩 배합 만들기</button>'
           + (nCombo ? '<button type="button" class="btn-sm admin-only combo-make-btn" data-action="restore-originals" title="예전 배합 만들기로 지워진 원래 콘티를, 같은 날짜의 배합 곡들을 모아 다시 만들어요">📄 원래 콘티 되살리기</button>' : '') : '');
   }
-  const base = all.filter(contiKindTest);
+  const wEl = document.getElementById('contiWorshipChips');
+  if (wEl) {
+    const inKind = all.filter(contiKindTest);
+    const n = k => inKind.filter(c => worshipKind(c) === k).length;
+    const w = (val, label, cnt) => `<button type="button" class="lib-chord-chip${val ? ' worship-' + val : ''}${LibState.contiWorship === val ? ' active' : ''}" data-action="conti-worship" data-val="${val || ''}">${label}${cnt === null ? '' : ` <span class="lib-chip-count">${cnt}</span>`}</button>`;
+    wEl.innerHTML = w(null, '전체', null) + ['special', 'sun', 'fri', 'etc'].map(k => (k === 'etc' && !n(k) ? '' : w(k, WORSHIP_LABEL[k], n(k)))).join('');
+  }
+  const base = all.filter(c => contiKindTest(c) && contiWorshipTest(c));
   const catEl = document.getElementById('contiCatChips');
   const markEl = document.getElementById('contiMarkChips');
   if (!catEl || !markEl) return;
@@ -835,6 +926,8 @@ function contiMarkPicker(c) {
 function renderContis() {
   const list = document.getElementById('contiList');
   const empty = document.getElementById('contisEmpty');
+  SpecialByTitle = new Map(LibState.contis.filter(c => !isCombo(c) && (c.special === true || c.special === false))
+    .map(c => [`${c.conti_date || ''}|${contiBaseTitle(c)}`, c.special]));
   renderContiFilters(LibState.contis);
   if (!LibState.contis.length) {
     list.innerHTML = '';
@@ -844,10 +937,10 @@ function renderContis() {
   }
   empty.classList.add('hidden');
   const test = contiCatTest();
-  const shown = LibState.contis.filter(c => contiKindTest(c) &&
+  const shown = LibState.contis.filter(c => contiKindTest(c) && contiWorshipTest(c) &&
     (!test || c.songs.some(test)) && (!LibState.contiMark || marksOf(contiMarkKey(c.id)).includes(LibState.contiMark)));
-  const filtered = test || LibState.contiMark || LibState.contiKind;
-  const kindWord = LibState.contiKind === 'combo' ? '배합' : '콘티';
+  const filtered = test || LibState.contiMark || LibState.contiKind || LibState.contiWorship;
+  const kindWord = (LibState.contiWorship ? WORSHIP_LABEL[LibState.contiWorship].replace(/^\S+\s/, '') + ' ' : '') + (LibState.contiKind === 'combo' ? '배합' : '콘티');
   document.getElementById('contisCount').textContent = filtered
     ? `${LibState.contiMark || ''} ${CONTI_CATS.filter(x => LibState.contiCats.has(x[0])).map(x => x[1]).join(' ')} ${kindWord} ${shown.length}개`.replace(/\s+/g, ' ').trim()
     : `콘티 ${shown.length}개`;
@@ -864,7 +957,7 @@ function renderContis() {
       <div class="conti-thumb lib-card-thumb" data-action="open-conti" data-id="${c.id}">${img(c.thumbnail_url, c.title)}</div>
       <div class="conti-info">
         <p class="conti-title" data-action="open-conti" data-id="${c.id}">${marks.length ? `<span class="card-marks">${marks.join('')}</span> ` : ''}${(c.overlaps || []).some(o => o.kind !== 'partial') ? '<span class="pending-badge dup">겹치는 콘티</span> ' : ''}${c.status === 'processing' ? `<span class="pending-badge processing">분석 중 ${escapeHtml(c.status_detail || '')}</span> ` : c.confirmed ? '' : '<span class="pending-badge">확인 필요</span> '}<span title="${escapeHtml(c.title)}">${escapeHtml(contiListName(c))}</span></p>
-        <p class="song-meta">${c.conti_date ? `📅 ${escapeHtml(c.conti_date)} · ` : ''}${c.songs.length}곡 · ${c.page_count}페이지</p>
+        <p class="song-meta">${worshipKind(c) === 'special' ? '<span class="special-badge">🔥 특별성회</span> ' : ''}${c.conti_date ? `📅 ${escapeHtml(c.conti_date)} · ` : ''}${c.songs.length}곡 · ${c.page_count}페이지${AuthState.canEdit && isPhpServer() && !isCombo(c) ? ` <button type="button" class="special-toggle admin-only" data-action="toggle-special" data-id="${c.id}" title="${worshipKind(c) === 'special' ? '특별성회에서 빼요' : '이 콘티(와 배합)를 특별성회에 넣어요'}">${worshipKind(c) === 'special' ? '특별성회 빼기' : '🔥 특별성회로'}</button>` : ''}</p>
         <div class="conti-songs">
           ${c.songs.map((s, i) => `<span class="conti-song-chip${s.section ? ' sec-' + s.section : ''}${test ? (test(s) ? ' hit' : ' dim') : ''}" title="${[s.section && SECTION_LABEL[s.section], s.tempo && TEMPO_LABEL[s.tempo]].filter(Boolean).join(' · ')}">${i + 1}. ${escapeHtml(s.title)}${s.key ? ` <b>${escapeHtml(s.key)}</b>` : ''}${s.tempo === 'slow' ? ' 🐢' : s.tempo === 'fast' ? ' 🐇' : ''}</span>`).join('')
             || '<span class="lib-card-nochords">곡이 없어요 — "곡 나누기·수정"에서 분석해주세요</span>'}
@@ -1482,6 +1575,11 @@ function initDelegatedActions() {
         LibState.contiKind = el.dataset.val && LibState.contiKind !== el.dataset.val ? el.dataset.val : null;
         renderContis();
         break;
+      case 'conti-worship':
+        LibState.contiWorship = el.dataset.val && LibState.contiWorship !== el.dataset.val ? el.dataset.val : null;
+        renderContis();
+        break;
+      case 'toggle-special': toggleContiSpecial(+el.dataset.id); break;
       case 'make-combos': makeCombos(); break;
       case 'restore-originals': restoreOriginalContis(); break;
       case 'conti-mark-filter':

@@ -93,6 +93,7 @@ function score_summary(array $row, bool $detail = false): array
         'title' => $row['title'],
         'page_count' => (int)$row['page_count'],
         'combo' => !empty($row['combo']),
+        'special' => isset($row['special']) ? (bool)$row['special'] : null,
         'chords' => $chords,
         'thumbnail_url' => "/api/scores/$id/thumbnail",
         'created_at' => $row['created_at'],
@@ -191,6 +192,9 @@ function api_update_score(int $id): array
     if (array_key_exists('conti_date', $b) && $b['conti_date'] !== null) {
         $d = trim((string)$b['conti_date']);
         q('UPDATE scores SET conti_date = ?, updated_at = NOW() WHERE id = ?', [$d === '' ? null : mb_substr($d, 0, 10), $id]);
+    }
+    if (array_key_exists('special', $b)) {   // 특별성회: true / false / null(자동)
+        q('UPDATE scores SET special = ? WHERE id = ?', [$b['special'] === null ? null : (int)(bool)$b['special'], $id]);
     }
     if (isset($b['chords']) && is_array($b['chords'])) {
         $cs = array_unique(array_filter(array_map('trim', array_map('strval', $b['chords'])), 'strlen'));

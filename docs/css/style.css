@@ -2770,3 +2770,9 @@ html[data-theme="light"] .live-song-chip.add-into { color: #4338ca; background: 
 .live-track.vertical.vz-small { background: #d9dbe2; }
 .live-track.vertical.vz-small .live-slide { background: transparent; border-bottom-color: transparent; padding: 6px 0; }
 .live-track.vertical.vz-small .live-slide img { box-shadow: 0 2px 10px rgba(0,0,0,.18); background: #fff; }
+
+/* 예배 종류 (🔥 특별성회) */
+.special-badge { display: inline-block; padding: 0 7px; border-radius: 999px; background: #fff1e6; color: #c2410c; font-weight: 700; font-size: .85em; }
+.lib-chord-chip.worship-special.active { background: #ea580c; border-color: #ea580c; color: #fff; }
+.special-toggle { margin-left: 6px; padding: 1px 8px; border: 1px solid #fdba74; border-radius: 999px; background: #fff; color: #c2410c; font-size: .8em; cursor: pointer; }
+.special-toggle:hover { background: #fff7ed; }

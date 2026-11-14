@@ -69,7 +69,7 @@ function q_val(string $sql, array $params = []) { $r = q($sql, $params)->fetchCo
 
 function marks_sql(array $ids): string { return implode(',', array_fill(0, count($ids), '?')); }
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 function ensure_schema(PDO $pdo): void
 {
@@ -180,6 +180,12 @@ function ensure_schema(PDO $pdo): void
         if (!str_contains($e->getMessage(), 'Duplicate column')) throw $e;
     }
     $pdo->exec("UPDATE scores SET combo = 1, title = SUBSTRING(title, 6) WHERE from_setlist = 1 AND title LIKE '배합 · %'");
+    // v6: 특별성회 직접 정하기 (NULL = 제목·요일로 자동, 1 = 특별성회, 0 = 아님)
+    try {
+        $pdo->exec("ALTER TABLE scores ADD COLUMN IF NOT EXISTS special TINYINT NULL DEFAULT NULL");
+    } catch (Throwable $e) {
+        if (!str_contains($e->getMessage(), 'Duplicate column')) throw $e;
+    }
     @mkdir(DATA_DIR . '/scores', 0755, true);
     @file_put_contents($flag, date('c'));
 }
